@@ -1,0 +1,225 @@
+# 시장 시황/뉴스레터 도구
+
+`scripts/analyze_market.py`는 `yfinance + 지정 FEED(통합 CSV 2개 + 텔레그램 3개)`를 결합해
+시황 Flash Layer와 **LLM 작성용 News Context Cards**를 생성한다.
+
+- 원칙: 파이썬은 데이터 정리 중심(표/리스트/카드), 특히 Flash Layer는 `Score + Signals + Rule Hits`만 출력한다.
+- 원칙: 파이썬 출력에는 `결론` 섹션을 넣지 않는다(결론 작성은 LLM 단계 담당).
+- 최종 산문 작성은 `SKILLs/MarketAnalysis.md` 지침으로 수행한다.
+
+## 실행 예시
+
+```bash
+python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 10
+python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 12 --out reports/market_newsletter_brief.md
+```
+
+## 주요 옵션
+- `--news-style`: `bloomberg|brief`
+- `--news-paragraphs`: 출력할 뉴스 컨텍스트 카드 수 (기본 10)
+- `--max-news-items`: 통합 후 분석에 쓰는 뉴스 최대 건수
+- `--timeline-items`: 뉴스 테이프에 표시할 최신 뉴스 건수
+- `--news-language`: 뉴스 제목 출력 언어 (`ko|original`, 기본 `ko`)
+- `--show-original-title`: `--news-language ko`일 때 원문 제목을 괄호로 병기
+- `--out`: 결과 Markdown 파일 경로
+
+---
+
+# 캘린더 도구
+
+이 프로젝트는 `yfinance.Calendars`를 사용해서 **어닝 캘린더 / 경제 이벤트 캘린더**를 조회하고, Markdown/CSV/JSON/ICS로 내보낼 수 있다.
+
+- 가상환경 미활성화 상태라면 `python3` 대신 `.venv/bin/python`으로 실행한다.
+
+## 실행 예시
+
+### 어닝 캘린더 (기본 7일, KST로 표시)
+```bash
+python3 scripts/calendar_cli.py earnings --start 2026-01-23 --limit 50 --format md
+```
+
+### 경제 이벤트 캘린더 (14일)
+```bash
+python3 scripts/calendar_cli.py economic --start 2026-01-23 --days 14 --format md
+```
+
+### ICS로 내보내기 (구글/애플 캘린더 임포트용)
+```bash
+python3 scripts/calendar_cli.py earnings --start 2026-01-23 --days 14 --format ics --out earnings.ics
+python3 scripts/calendar_cli.py economic --start 2026-01-23 --days 14 --format ics --out economic.ics
+```
+
+## 옵션 메모
+- `--format` : `md|csv|json|ics|pretty`
+- `--duration-minutes` : `--format ics`일 때 이벤트 지속시간(분)
+
+---
+
+# 포트폴리오 도구
+
+`scripts/portfolio_cli.py`는 사용자 포트폴리오 이력을 JSONL로 기록하고, 누적수익률을 계산/시각화한다.
+
+## 초기화
+
+```bash
+python3 scripts/portfolio_cli.py init
+```
+
+## 의사결정 로그 추가 (가치관/컨디션/판단 근거)
+
+```bash
+python3 scripts/portfolio_cli.py add-decision \
+  --date 2026-02-15 \
+  --decision-type considering \
+  --status planned \
+  --summary "기술주 비중 5% 축소 고려" \
+  --rationale "변동성 스트레스가 커짐" \
+  --condition "수면 부족" \
+  --tickers QQQ,NVDA \
+  --values 안정성,현금흐름
+```
+
+## 상담 답변 종료 시 자동 decision append
+
+`log-counsel`은 상담 답변 텍스트를 받아 요약/티커/태그를 자동 추출하고 `decision_log.jsonl`에 기록한다.
+
+```bash
+python3 scripts/portfolio_cli.py log-counsel \
+  --query-text "기술주 비중을 줄일까?" \
+  --response-file reports/portfolio_strategy_review_2026-02-15.md \
+  --status considering
+```
+
+STDIN 파이프 입력도 가능:
+
+```bash
+cat reports/portfolio_strategy_review_2026-02-15.md | \
+python3 scripts/portfolio_cli.py log-counsel \
+  --query-text "기술주 비중을 줄일까?" \
+  --status considering
+```
+
+## 거래/현금 로그 추가
+
+```bash
+python3 scripts/portfolio_cli.py add-cash --date 2026-02-14 --amount 10000 --category deposit --memo "초기 입금"
+python3 scripts/portfolio_cli.py add-trade --date 2026-02-14 --symbol AAPL --side BUY --qty 10 --price 185.2 --fee 1.0
+python3 scripts/portfolio_cli.py add-cash --date 2026-02-20 --amount 5.4 --category dividend --internal --memo "배당"
+```
+
+## 백테스트형 NAV 기록
+
+```bash
+python3 scripts/portfolio_cli.py add-nav --date 2026-01-31 --nav 100000 --source backtest
+python3 scripts/portfolio_cli.py add-nav --date 2026-02-28 --nav 103500 --source backtest
+```
+
+## 포지션/성과 조회
+
+```bash
+python3 scripts/portfolio_cli.py positions --asof 2026-02-28 --format md
+python3 scripts/portfolio_cli.py performance --start 2026-01-01 --end 2026-02-28 --method auto --format md
+```
+
+## 누적수익률 차트 저장 (벤치마크 비교 포함)
+
+```bash
+python3 scripts/portfolio_cli.py chart --start 2026-01-01 --end 2026-02-28 --benchmark SPY --benchmark QQQ
+```
+
+- 차트 라벨 기본값: 좌상단 범례 대신 각 선의 오른쪽 끝에 `자산명 | 수익률%`(소수점 둘째 자리) 형식으로 표시한다(End Label).
+- 라벨 스타일 기본값: 흰색 텍스트 + 해당 선 색상 배경 박스.
+- `chart` 실행 시 성과 스탯 테이블 PNG도 기본으로 함께 생성된다.
+  - 기본 파일명: `차트파일명_stats.png`
+  - 비활성화: `--no-stats-table`
+  - 출력 경로 지정: `--stats-table-out <path>`
+  - Beta 기준: 기본 `SPY`, 필요 시 `--beta-benchmark '^KS11'`처럼 변경
+  - 컬럼: `자산명 | Cumulative Return | CAGR | Max Drawdown | Volatility | Sharpe | Sortino | Kelly | Ulcer Index | UPI | Beta`
+
+## 포맷/출력 옵션
+- `positions`, `performance`: `--format md|csv|json|pretty`, `--out`
+- `chart`: `--out`, `--csv-out`, `--title`, `--width`, `--height`, `--dpi`
+
+---
+
+# 외부 세계 메모리 도구
+
+`scripts/world_memory_cli.py`는 속보와 분리된 **중기 템포의 시장 동향 로그**를 누적 저장한다.
+
+- 기본 저장소(SQLite): `portfolio/world_issue_log.sqlite3`
+- 레거시 미러(JSONL): `portfolio/world_issue_log.jsonl`
+- 기본 시간대: `KST(Asia/Seoul)`
+- 기본 분류:
+  - `category`: `stock_bond`, `geopolitics`, `emerging`
+  - `region`: `US`, `KR`, `GLOBAL`
+  - `importance`: `high`, `medium`, `low`
+
+## 초기화
+
+```bash
+python3 scripts/world_memory_cli.py init
+```
+
+## 기존 JSONL 이관
+
+```bash
+python3 scripts/world_memory_cli.py migrate
+```
+
+## 이슈 1건 저장
+
+```bash
+python3 scripts/world_memory_cli.py add \
+  --as-of 2026-02-16T08:30:00+09:00 \
+  --category stock_bond \
+  --region US \
+  --importance high \
+  --title "US Treasury yield volatility persists" \
+  --summary "장기 금리 변동성이 성장주 밸류에이션과 회사채 스프레드에 압박을 준다." \
+  --story "디스인플레이션 기대 vs 성장 둔화 우려" \
+  --story-thesis "소비 둔화가 이어지면 인하 기대가 커지지만 경기민감주 변동성이 커진다." \
+  --story-checkpoint "미 고용/소비 재가속 여부와 10년물 금리 4.5% 재돌파" \
+  --portfolio-link "미국 성장주 비중과 IG/HY 채권 비중의 동시 점검 필요" \
+  --tickers QQQ,TLT,HYG \
+  --tags rates,credit \
+  --source "Bloomberg|https://www.bloomberg.com/markets|2026-02-16T07:00:00+09:00"
+```
+
+기본 동작은 SQLite 저장 + JSONL 미러 append다.
+- SQLite만 저장하려면: `--no-jsonl-mirror`
+
+출처는 최소 1개가 필요하며 아래 방식 중 하나를 사용한다.
+- `--source "매체|URL|게시시각(옵션)|메모(옵션)"` (여러 번 지정 가능)
+- `--sources-json '[{"name":"...","url":"..."}]'`
+- `--sources-file sources.json`
+
+스토리 중심 로그를 위해 아래 필드를 권장한다.
+- `--story`: 이슈를 묶는 상위 내러티브 라벨
+- `--story-thesis`: 핵심 테제 1문장
+- `--story-checkpoint`: 스토리 유지/무효화 체크포인트
+
+## 로그 조회
+
+```bash
+python3 scripts/world_memory_cli.py list --days 14 --format md
+python3 scripts/world_memory_cli.py list --days 30 --category stock_bond --region KR --importance high --format csv --out reports/world_issue_slice.csv
+```
+
+## 보고서 생성
+
+```bash
+python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_report_$(date +%F).md
+```
+
+`report` 기본 섹션:
+1. 시장을 주도하는 스토리 (Narrative Lens)
+2. 주식/채권 주요 이슈 (미국/한국/글로벌 분리)
+3. 글로벌 정치 이슈
+4. 비지배적 관심 이슈
+5. 포트폴리오 상담 반영 체크포인트
+6. 결론
+
+## 의존성 메모
+- 필수: `yfinance`, `pandas`, `matplotlib`
+- 설치 예시:
+  - `uv pip install --python .venv/bin/python -r requirements.txt`
