@@ -2,6 +2,14 @@
 
 이 프로젝트는 금융 정보 습득을 위해 기본적으로 **yfinance API**를 사용한다.
 
+## GitHub 공유/커밋 원칙
+- 공식 원격 저장소: `https://github.com/homuramagica/FinancialTransactionAssistantAgent`
+- 기본 브랜치: `main`
+- 빠른 커밋+푸시: `bash scripts/git_quick_commit.sh "커밋 메시지"`
+- 위 스크립트는 현재 브랜치 기준으로 `git add -A -> git commit -> git push`를 순서대로 수행한다.
+- 공유 제외 파일은 반드시 `.gitignore`를 따른다 (`.venv`, `tmp`, `reports`, 개인 로그 등).
+- 단, `portfolio/world_issue_log.jsonl`, `portfolio/world_issue_log.sqlite3`는 공유 대상이다.
+
 ## 동작 원칙
 - 기본 데이터 소스는 yfinance이다.
 - 실행 환경에 필요한 도구(예: Python, yfinance 등)가 설치되어 있지 않다면, 사용자에게 **설치 여부를 먼저 확인**한 뒤 진행한다.
