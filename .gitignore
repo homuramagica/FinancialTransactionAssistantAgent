@@ -34,3 +34,7 @@ portfolio/*.sqlite3
 **/world_issue_log.sqlite3
 **/*_log.jsonl
 **/*_log.sqlite3
+
+# Share world memory database/log explicitly
+!portfolio/world_issue_log.jsonl
+!portfolio/world_issue_log.sqlite3
