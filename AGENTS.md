@@ -19,6 +19,18 @@
   그 다음 초보자 친화적으로 설명한다.
 - 초보자 대상/기초 설명 요청이 우선인 경우 `SKILLs/Newbie.md`의 지침을 추가 적용한다.
 
+## 상담 메모리 엔진 (Always-on) 전역 원칙
+- 이 규칙은 금융 관련 질의(시장/뉴스/실적/기업/섹터/포트폴리오/매수·매도/투자 감정 표현)에 기본 적용한다.
+- 답변 초안 작성 전에 아래 명령으로 개인 메모리 컨텍스트를 먼저 준비한다(기본: ingest 포함).
+  - `python3 scripts/counsel_memory_cli.py prepare-turn --user-text "<사용자 최신 발화>" --extractor-mode hybrid --format md`
+- `prepare-turn` 실행이 실패하면 아래 순서로 복구 후 1회 재시도한다.
+  1. `python3 scripts/counsel_memory_cli.py init`
+  2. 동일 `prepare-turn` 명령 재실행
+- 사용자가 심리/감정(예: 불안, 억울, 답답, 스트레스)을 표현한 턴은 메모리 반영 여부를 반드시 확인한다.
+  - 필요 시 `ingest-turn --dry-run`으로 후보를 점검하고, 누락 시 `ingest-turn`으로 보강한다.
+- 기본 추출 모드는 `hybrid`(문맥/의도 패턴 + 키워드 fallback)이며, 디버깅 시에만 `instruction` 또는 `keyword` 단독 모드를 사용한다.
+- 상담형 답변 후에는 필요 시 `portfolio_cli.py log-counsel`로 의사결정 로그를 남겨 다음 상담 품질을 높인다.
+
 ## 차트 가독성 원칙
 - `scripts/portfolio_cli.py chart`로 생성하는 성과 차트는 기본적으로 **좌상단 범례(legend)를 쓰지 않고**, 각 선의 **오른쪽 끝(end-of-line)에 자산 이름 라벨**을 붙인다.
 - 라벨은 **흰색 텍스트**를 사용하고, 라벨 박스 배경색은 **해당 선 색상**과 일치시킨다.

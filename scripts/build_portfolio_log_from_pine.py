@@ -42,6 +42,8 @@ DEFAULT_SWAPS = [
     ("2026-01-27", "META", "MELI"),
     ("2026-01-28", "CVNA", "NFLX"),
     ("2026-02-04", "UBER", "META"),
+    ("2026-02-24", "WMT", "AAPL"),
+    ("2026-02-24", "MELI", "IBM"),
 ]
 
 
@@ -404,8 +406,8 @@ def main() -> int:
     parser.add_argument("--initial-capital", type=float, default=100.0, help="Initial portfolio capital")
     parser.add_argument(
         "--rebalance-dates",
-        default="2026-01-27",
-        help="Comma-separated rebalance dates (YYYY-MM-DD). Default is one-time rebalance on 2026-01-27.",
+        default="2026-02-01",
+        help="Comma-separated rebalance dates (YYYY-MM-DD). Default is one-time rebalance on 2026-02-01.",
     )
     parser.add_argument("--out", default="portfolio/position_log.jsonl", help="Output JSONL path")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it already has data")

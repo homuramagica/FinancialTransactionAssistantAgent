@@ -20,6 +20,15 @@
 - 로그 가이드: `portfolio/README.md`
 - 필수 패키지: `yfinance`, `pandas`, `matplotlib` (`requirements.txt`)
 
+## 상담 메모리(Always-on)
+상담 대화에서 의미 있는 발화(목표/리스크/제약/심리/관심테마)를 자동 추출해
+업서트 기반 메모리와 변경 이력(delta)로 관리할 수 있다.
+
+- 실행: `python3 scripts/counsel_memory_cli.py --help`
+- 저장소: `portfolio/counsel_memory.sqlite3`, `portfolio/counsel_memory_log.jsonl`
+- 답변 준비팩(권장): `python3 scripts/counsel_memory_cli.py prepare-turn --user-text "..."`
+- 사용 예시는 `scripts/README.md` 참고
+
 ## 외부 세계 메모리(시장 동향 로그)
 속보와 분리된 중기 템포의 시장/정치 이슈를 `portfolio/world_issue_log.sqlite3`(기본 저장소)에 누적하고, 필요 시 `world_issue_log.jsonl` 미러와 함께 운영할 수 있다.
 

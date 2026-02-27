@@ -142,6 +142,68 @@ python3 scripts/portfolio_cli.py chart --start 2026-01-01 --end 2026-02-28 --ben
 
 ---
 
+# 상담 메모리 엔진 (Always-on Memory)
+
+`scripts/counsel_memory_cli.py`는 사용자 발화를 매 턴 단위로 받아
+`의미 있는 메모리만` 자동 추출/업서트하고, 변경점(delta)을 이력으로 남긴다.
+
+- 저장소(SQLite): `portfolio/counsel_memory.sqlite3`
+- 이벤트 로그(JSONL): `portfolio/counsel_memory_log.jsonl`
+- 검색 방식: 다국어 문자 n-gram 기반 벡터 + 키워드 하이브리드
+- 메모리 타입 예시:
+  - `goal`, `risk_tolerance`, `constraints`, `allocation_decision`, `regime_view`
+  - `emotional_state`, `personal_context`, `interest_theme`, `interaction_preference`, `decision_rule`
+
+## 초기화
+
+```bash
+python3 scripts/counsel_memory_cli.py init
+```
+
+## 턴 단위 자동 반영 (핵심)
+
+```bash
+python3 scripts/counsel_memory_cli.py ingest-turn \
+  --user-text "포트폴리오가 흔들려서 불안해. 기술주 비중을 줄이는 게 좋을까?" \
+  --assistant-text "변동성 상한을 두고 기술주 비중을 단계적으로 낮추자."
+```
+
+- 중요도 낮은 후보는 저장하지 않는다 (`--min-importance`, 기본 `0.65`)
+- 추출 모드는 기본 `hybrid`(문맥 패턴 + 키워드 fallback)이며 `--extractor-mode instruction|keyword|hybrid`로 전환 가능
+- 같은 의미는 `reinforce`, 방침 변화는 `update`로 자동 기록된다.
+- 단기 심리/레짐 메모는 TTL 만료 시 `expire` 처리된다.
+
+## 메모리 조회/검색/변경이력
+
+```bash
+python3 scripts/counsel_memory_cli.py list --status active --format md
+python3 scripts/counsel_memory_cli.py search --query-text "요즘 변동성이 불안해" --format md
+python3 scripts/counsel_memory_cli.py deltas --days 30 --format md
+```
+
+## 답변 준비팩 자동 생성 (추천)
+
+`prepare-turn`은 가벼운 발화라도 금융 단서(경제/종목/섹터/티커/비중)가 잡히면
+아래를 자동으로 묶어 **답변 직전 컨텍스트 팩**을 만든다.
+
+1. 턴 메모리 업서트 (`new/reinforce/update/promote`)
+2. 개인 메모리 히트(top-k)
+3. 최근 월드메모리(기본 21일)
+4. 포트폴리오 펄스(누적수익률/낙폭/상위 보유)
+
+```bash
+python3 scripts/counsel_memory_cli.py prepare-turn \
+  --user-text "요즘 금리랑 관세가 찜찜한데 기술주 비중 유지할까?" \
+  --extractor-mode hybrid \
+  --format md \
+  --out reports/counsel_prep_pack.md
+```
+
+- 기본값은 자동 ingest다. 저장 없이 준비만 하려면 `--no-ingest`.
+- 금융 단서가 없으면 월드메모리/포트폴리오 조회는 건너뛰고 메모리 중심으로 가볍게 처리한다.
+
+---
+
 # 외부 세계 메모리 도구
 
 `scripts/world_memory_cli.py`는 속보와 분리된 **중기 템포의 시장 동향 로그**를 누적 저장한다.
