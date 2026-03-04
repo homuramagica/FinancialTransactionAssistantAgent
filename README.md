@@ -6,6 +6,15 @@
 - 실행: `python3 scripts/analyze_market.py --help`
 - 추천: `python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 10 --out reports/market_newsletter_brief.md`
 
+## 나스닥 옵션 분석 (QQQ, HTML 리포트)
+`QQQ` 가격 + 옵션체인을 결합해 요청형 1회 분석 리포트를 생성한다.
+출력은 `reports/` 경로의 HTML 파일이며, 3D IV Surface(면), 거래량, MACD, 지표 요약, 용어 가이드를 포함한다.
+
+- 실행: `.venv/bin/python scripts/nasdaq_option_analysis.py --help`
+- 추천: `.venv/bin/python scripts/nasdaq_option_analysis.py --period 2y --max-exp 5 --outdir reports`
+- 출력 예시: `reports/nasdaq_option_analysis_qqq_YYYYMMDD_HHMMSS_kst.html`
+- 필요 패키지(예): `uv pip install --python .venv/bin/python plotly`
+
 ## 캘린더(어닝/경제 이벤트)
 `yfinance.Calendars` 기반으로 **어닝 캘린더 / 경제 이벤트 캘린더**를 조회하고 내보낼 수 있다.
 
