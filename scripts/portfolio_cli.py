@@ -1277,14 +1277,25 @@ def _handle_chart(args: argparse.Namespace) -> int:
     # 가독성을 위해 범례 대신 각 라인의 우측 끝에 자산명을 직접 라벨링한다.
     endpoints: list[dict[str, Any]] = []
     for col in curve.columns:
-        series = (curve[col].astype(float) * 100.0).dropna()
-        if series.empty:
+        raw_series = curve[col].astype(float).dropna()
+        if raw_series.empty:
             continue
+        last_cum_ret = float(raw_series.iloc[-1] * 100.0)
+        if len(raw_series) >= 2:
+            prev_cum_ret = float(raw_series.iloc[-2])
+            prev_base = 1.0 + prev_cum_ret
+            if abs(prev_base) < 1e-12:
+                last_daily_ret = 0.0
+            else:
+                last_daily_ret = float(((1.0 + float(raw_series.iloc[-1])) / prev_base - 1.0) * 100.0)
+        else:
+            last_daily_ret = 0.0
         endpoints.append(
             {
                 "name": col,
-                "x": series.index[-1],
-                "y": float(series.iloc[-1]),
+                "x": raw_series.index[-1],
+                "y": last_cum_ret,
+                "daily_return": last_daily_ret,
                 "color": lines[col].get_color(),
             }
         )
@@ -1323,8 +1334,9 @@ def _handle_chart(args: argparse.Namespace) -> int:
             x0 = pd.to_datetime(point["x"])
             color = str(point["color"])
             name = str(point["name"])
+            daily_ret = float(point.get("daily_return", 0.0))
             ax.plot([x0, label_x], [y0, y1], color=color, linewidth=0.9, alpha=0.7, linestyle=":")
-            label_txt = f"{name} | {y0:.2f}%"
+            label_txt = f"{name} {y0:.2f}% ({daily_ret:+.2f}%)"
             ax.text(
                 label_x,
                 y1,
