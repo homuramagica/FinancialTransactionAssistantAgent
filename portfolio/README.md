@@ -5,7 +5,6 @@
 - `decision_log.jsonl`: 투자 판단/가치관/심리/고민 로그
 - `position_log.jsonl`: 거래/현금흐름/NAV 스냅샷 로그
 - `world_issue_log.sqlite3`: 시장 동향/정치 이슈/관심 이슈 기본 저장소
-- `world_issue_log.jsonl`: 외부 세계 로그 레거시 미러
 - `counsel_sessions/`: (기본) 상담 질문/답변 원문 백업 JSON
 
 JSONL은 한 줄이 하나의 JSON 레코드입니다.
@@ -43,9 +42,9 @@ JSONL은 한 줄이 하나의 JSON 레코드입니다.
 
 - 운영 방식:
   - 기본 조회/리포트 소스: `world_issue_log.sqlite3`
-  - 호환용 append 미러: `world_issue_log.jsonl`
   - 기본 철학: raw article 전문 저장보다 `summary + why_it_matters + portfolio_link + story/thesis/checkpoint + sources` 중심의 **summary-first memory**
   - 2.5 계층: append-only issue log 위에 `world_issue_states` 상태 스냅샷 레이어를 추가해 현재 active/watch 상태를 따로 읽는다.
+  - 엔트리 모드: `issue`(기존 중기 이슈)와 `brief`(주체/산업 짧은 메모)로 구분한다.
 
 - 분류:
   - `category`: `stock_bond`(주식/채권), `geopolitics`(정치/지정학), `emerging`(비지배 관심 이슈)
@@ -53,6 +52,7 @@ JSONL은 한 줄이 하나의 JSON 레코드입니다.
   - `importance`: `high`, `medium`, `low`
   - `story`, `tags`, `tickers`는 기존 값을 우선 재사용하고, 기존 규격으로 담기 어려운 경우에만 새 값을 최소 단위로 추가
   - `state_key`, `net_effect`도 기존 값을 우선 재사용하고, 꼭 필요한 경우에만 새 값을 추가
+  - `brief` 메모는 `subjects`, `industries`, `event_kind`, `dedupe_key` 중심으로 짧게 저장하고, 기본적으로 derived state를 만들지 않는다.
 - 시간:
   - `as_of`, `logged_at` 모두 KST 기준 ISO 8601
 - 출처:
@@ -63,6 +63,12 @@ JSONL은 한 줄이 하나의 JSON 레코드입니다.
 
 ```json
 {"schema_version":1,"event_id":"...","logged_at":"2026-02-16T16:40:00+09:00","entry_type":"world_issue","as_of":"2026-02-16T09:10:00+09:00","date":"2026-02-16","category":"geopolitics","region":"GLOBAL","importance":"medium","horizon":"1~3개월","title":"Energy corridor disruption risk resurfacing","summary":"에너지 수송 차질 리스크가 원자재 변동성을 키울 가능성.","portfolio_link":"원자재/방어 섹터 헷지 여부 점검","tickers":[],"tags":["energy","geopolitics"],"sources":[{"name":"Reuters","url":"https://www.reuters.com/world/","published_at":"2026-02-16T08:50:00+09:00"}]}
+```
+
+브리프 예시:
+
+```json
+{"schema_version":1,"event_id":"...","logged_at":"2026-03-10T08:40:00+09:00","entry_type":"world_issue","entry_mode":"brief","as_of":"2026-03-10T08:35:00+09:00","date":"2026-03-10","category":"emerging","region":"GLOBAL","importance":"low","horizon":"수일~수주","title":"젠슨 황, AI 수요 발언 유지","summary":"AI 서버 수요에 대한 자신감 유지 발언.","subjects":[{"name":"Jensen Huang","type":"business_leader"},{"name":"NVIDIA","type":"company"}],"industries":["semiconductors","ai infrastructure"],"event_kind":"statement","dedupe_key":"brief__2026_03_10__statement__jensen_huang_nvidia","derive_state":false,"sources":[{"name":"Regular media feed","url":"https://rss.app/feeds/_hc8HiU0HyBWHfWoM.csv","published_at":"2026-03-10T08:35:00+09:00"}]}
 ```
 
 ## 4) 계산 로직 요약
@@ -113,6 +119,22 @@ python3 scripts/world_memory_cli.py taxonomy --refresh --format md
 python3 scripts/world_memory_cli.py states --status active --format md
 python3 scripts/world_memory_cli.py state-sync
 python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_report_$(date +%F).md
+
+python3 scripts/world_memory_cli.py brief-add \
+  --title "젠슨 황, AI 수요 발언 유지" \
+  --summary "AI 서버 수요에 대한 자신감 유지 발언." \
+  --subject "Jensen Huang|business_leader" \
+  --subject "NVIDIA|company" \
+  --industry semiconductors \
+  --industry "ai infrastructure" \
+  --event-kind statement \
+  --source "Regular media feed|https://rss.app/feeds/_hc8HiU0HyBWHfWoM.csv|2026-03-10T08:35:00+09:00"
+
+python3 scripts/world_memory_cli.py brief-import \
+  --from-file tmp/world_memory_briefs.jsonl \
+  --skip-if-duplicate
+
+python3 scripts/world_memory_cli.py list --entry-mode brief --subject Jensen --days 30 --format md
 ```
 
 상태 전이까지 반영하려면 `add` 시 아래 옵션을 함께 사용한다.
@@ -124,3 +146,4 @@ python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_
 - `--supersedes-active`
 
 `story`만 있는 일반 `add`도 derived 상태를 자동 갱신한다. `state-sync`는 기존 적재분 백필/재구성용이다.
+`brief-add`/`brief-import`는 주체·산업 브리프를 저장한다. 기본적으로 `derive_state=false`이며 `dedupe_key`로 중복 적재를 제어한다.

@@ -8,7 +8,7 @@
 - 빠른 커밋+푸시: `bash scripts/git_quick_commit.sh "커밋 메시지"`
 - 위 스크립트는 현재 브랜치 기준으로 `git add -A -> git commit -> git push`를 순서대로 수행한다.
 - 공유 제외 파일은 반드시 `.gitignore`를 따른다 (`.venv`, `tmp`, `reports`, 개인 로그 등).
-- 단, `portfolio/world_issue_log.jsonl`, `portfolio/world_issue_log.sqlite3`는 공유 대상이다.
+- 단, `portfolio/world_issue_log.sqlite3`는 공유 대상이다.
 
 ## 동작 원칙
 - 기본 데이터 소스는 yfinance이다.
@@ -94,7 +94,7 @@
 - `world_memory`는 raw article 전문 저장소가 아니라 **summary-first memory**다.
 - 저장 단위는 기본적으로 이슈 요약본(1~2문단)이며, `summary`, `why_it_matters`, `portfolio_link`, `story`, `story_thesis`, `story_checkpoint`, `sources`, `tags`, `tickers`를 우선 채운다.
 - raw article 전문은 접근 가능할 때만 선택적으로 보조 저장하며, `world_memory`의 기본 필수값으로 취급하지 않는다.
-- 기본 저장 경로: `portfolio/world_issue_log.jsonl`
+- 기본 저장 경로: `portfolio/world_issue_log.sqlite3`
 - 기본 도구: `scripts/world_memory_cli.py`
 - 기존 분류/스토리/태그/티커 사용 현황을 확인할 때는 `python3 scripts/world_memory_cli.py taxonomy --refresh --format md`를 사용한다.
 - 로그에 반드시 포함:

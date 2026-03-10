@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import sqlite3
@@ -16,22 +17,37 @@ import pandas as pd
 
 
 DEFAULT_BASE_DIR = "portfolio"
-DEFAULT_LOG_FILE = "world_issue_log.jsonl"
 DEFAULT_DB_FILE = "world_issue_log.sqlite3"
 DEFAULT_TZ = "Asia/Seoul"
 
 CATEGORY_CHOICES = ["stock_bond", "geopolitics", "emerging"]
 REGION_CHOICES = ["US", "KR", "GLOBAL"]
 IMPORTANCE_CHOICES = ["high", "medium", "low"]
+ENTRY_MODE_CHOICES = ["issue", "brief"]
 STATE_STATUS_CHOICES = ["active", "watch", "resolved", "overridden"]
 STATE_BIAS_CHOICES = ["bullish", "bearish", "neutral", "mixed"]
+SUBJECT_TYPE_CHOICES = [
+    "person",
+    "politician",
+    "business_leader",
+    "company",
+    "institution",
+    "industry",
+    "market_actor",
+    "other",
+]
 TAXONOMY_TYPE_CHOICES = [
     "category",
     "region",
     "importance",
+    "entry_mode",
     "story",
     "tag",
     "ticker",
+    "subject",
+    "subject_type",
+    "industry",
+    "event_kind",
     "state_key",
     "net_effect",
 ]
@@ -39,6 +55,8 @@ SYSTEM_TAXONOMY_VALUES: dict[str, list[str]] = {
     "category": CATEGORY_CHOICES,
     "region": REGION_CHOICES,
     "importance": IMPORTANCE_CHOICES,
+    "entry_mode": ENTRY_MODE_CHOICES,
+    "subject_type": SUBJECT_TYPE_CHOICES,
 }
 
 
@@ -109,13 +127,198 @@ def _unique_preserve_order(items: list[str]) -> list[str]:
     return out
 
 
-def _normalize_state_key(value: str) -> str:
+def _slug_token(value: str) -> str:
     token = value.strip().lower()
     token = re.sub(r"[^\w가-힣]+", "_", token)
-    token = re.sub(r"_+", "_", token).strip("_")
+    return re.sub(r"_+", "_", token).strip("_")
+
+
+def _normalize_state_key(value: str) -> str:
+    token = _slug_token(value)
     if not token:
         raise SystemExit("state key is empty after normalization")
     return token
+
+
+def _normalize_entry_mode(value: str) -> str:
+    token = value.strip().lower()
+    mapping = {
+        "issue": "issue",
+        "issues": "issue",
+        "brief": "brief",
+        "briefs": "brief",
+        "signal": "brief",
+        "signals": "brief",
+    }
+    normalized = mapping.get(token)
+    if normalized is None:
+        raise SystemExit(f"Invalid entry mode: {value} (allowed: {', '.join(ENTRY_MODE_CHOICES)})")
+    return normalized
+
+
+def _normalize_subject_type(value: str) -> str:
+    token = value.strip().lower()
+    mapping = {
+        "person": "person",
+        "people": "person",
+        "human": "person",
+        "politician": "politician",
+        "political": "politician",
+        "political_leader": "politician",
+        "business": "business_leader",
+        "business_leader": "business_leader",
+        "businessperson": "business_leader",
+        "businessman": "business_leader",
+        "businesswoman": "business_leader",
+        "executive": "business_leader",
+        "ceo": "business_leader",
+        "founder": "business_leader",
+        "company": "company",
+        "corp": "company",
+        "corporation": "company",
+        "firm": "company",
+        "institution": "institution",
+        "agency": "institution",
+        "government": "institution",
+        "regulator": "institution",
+        "central_bank": "institution",
+        "industry": "industry",
+        "sector": "industry",
+        "market_actor": "market_actor",
+        "investor": "market_actor",
+        "fund": "market_actor",
+        "bank": "market_actor",
+        "other": "other",
+    }
+    normalized = mapping.get(token)
+    if normalized is None:
+        raise SystemExit(f"Invalid subject type: {value} (allowed: {', '.join(SUBJECT_TYPE_CHOICES)})")
+    return normalized
+
+
+def _normalize_event_kind(value: str) -> str:
+    token = _slug_token(value)
+    return token
+
+
+def _normalize_dedupe_key(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if not token:
+            return default
+        if token in {"1", "true", "yes", "y", "on"}:
+            return True
+        if token in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+def _parse_subject_item(raw: str) -> dict[str, str]:
+    parts = [part.strip() for part in raw.split("|", 1)]
+    name = parts[0]
+    subject_type = parts[1] if len(parts) > 1 else "other"
+    if not name:
+        raise SystemExit("subject name is required")
+    return {
+        "name": name,
+        "type": _normalize_subject_type(subject_type or "other"),
+    }
+
+
+def _normalize_subjects_for_storage(value: Any) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if isinstance(value, list):
+        raw_items = value
+    elif isinstance(value, str):
+        raw_items = _split_csv(value)
+    else:
+        raw_items = []
+
+    for raw in raw_items:
+        if isinstance(raw, dict):
+            name = str(raw.get("name", "")).strip()
+            subject_type = str(raw.get("type", "")).strip() or "other"
+            if not name:
+                continue
+            items.append(
+                {
+                    "name": name,
+                    "type": _normalize_subject_type(subject_type),
+                }
+            )
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        items.append(_parse_subject_item(text))
+
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        key = (
+            str(item.get("name", "")).strip().casefold(),
+            str(item.get("type", "")).strip().lower(),
+        )
+        if not key[0]:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _normalize_industries_for_storage(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return _unique_preserve_order([str(item).strip() for item in value if str(item).strip()])
+    if isinstance(value, str):
+        return _unique_preserve_order(_split_csv(value))
+    return []
+
+
+def _auto_dedupe_key(payload: dict[str, Any]) -> str:
+    entry_mode = _normalize_entry_mode(str(payload.get("entry_mode", "issue")))
+    if entry_mode != "brief":
+        return ""
+
+    parts: list[str] = [entry_mode, str(payload.get("date", "")).strip()]
+    event_kind = str(payload.get("event_kind", "")).strip()
+    if event_kind:
+        parts.append(event_kind)
+
+    subjects = [
+        _slug_token(str(item.get("name", "")))
+        for item in payload.get("subjects", [])
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    ]
+    if subjects:
+        parts.append("-".join(subjects[:3]))
+
+    industries = [_slug_token(str(item)) for item in payload.get("industries", []) if str(item).strip()]
+    if industries:
+        parts.append("-".join(industries[:2]))
+
+    title = _slug_token(str(payload.get("title", "")))
+    if title:
+        parts.append(title[:80])
+
+    material = "__".join([part for part in parts if part])
+    if not material:
+        return ""
+    if len(material) <= 180:
+        return material
+    digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:12]
+    return f"{material[:160]}__{digest}"
 
 
 def _normalize_state_status(value: str) -> str:
@@ -165,14 +368,6 @@ def _ensure_base_dir(base_dir: str) -> Path:
     return base
 
 
-def _ensure_log(base_dir: str) -> Path:
-    base = _ensure_base_dir(base_dir)
-    log_path = base / DEFAULT_LOG_FILE
-    if not log_path.exists():
-        log_path.touch()
-    return log_path
-
-
 def _resolve_db_path(base_dir: str, db_file: str) -> Path:
     base = _ensure_base_dir(base_dir)
     return base / db_file
@@ -196,18 +391,29 @@ def _init_db(conn: sqlite3.Connection) -> None:
             category TEXT NOT NULL,
             region TEXT NOT NULL,
             importance TEXT NOT NULL,
+            entry_mode TEXT NOT NULL DEFAULT 'issue',
+            dedupe_key TEXT NOT NULL DEFAULT '',
             logged_at TEXT NOT NULL,
             title TEXT NOT NULL,
             payload_json TEXT NOT NULL
         )
         """
     )
+    _ensure_world_issue_entry_columns(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_world_issue_entries_as_of ON world_issue_entries(as_of DESC)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_world_issue_entries_filters "
         "ON world_issue_entries(issue_date, category, region, importance)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_issue_entries_entry_mode "
+        "ON world_issue_entries(entry_mode, issue_date, category, region, importance)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_issue_entries_dedupe_key "
+        "ON world_issue_entries(dedupe_key, issue_date DESC)"
     )
     conn.execute(
         """
@@ -272,6 +478,14 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _ensure_world_issue_entry_columns(conn: sqlite3.Connection) -> None:
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(world_issue_entries)")}
+    if "entry_mode" not in columns:
+        conn.execute("ALTER TABLE world_issue_entries ADD COLUMN entry_mode TEXT NOT NULL DEFAULT 'issue'")
+    if "dedupe_key" not in columns:
+        conn.execute("ALTER TABLE world_issue_entries ADD COLUMN dedupe_key TEXT NOT NULL DEFAULT ''")
+
+
 def _seed_system_taxonomy(conn: sqlite3.Connection) -> None:
     now = _kst_now().isoformat()
     for taxonomy_type, values in SYSTEM_TAXONOMY_VALUES.items():
@@ -291,31 +505,6 @@ def _ensure_db(base_dir: str, db_file: str) -> Path:
     with _connect_db(db_path) as conn:
         _init_db(conn)
     return db_path
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as f:
-        for line_no, raw in enumerate(f, start=1):
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise SystemExit(f"JSONL parse error in {path}:{line_no}: {e.msg}") from e
-            if isinstance(row, dict):
-                rows.append(row)
-    return rows
-
-
-def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False))
-        f.write("\n")
 
 
 def _emit_text(text: str, out_path: str | None) -> None:
@@ -523,6 +712,7 @@ def _build_issue_payload(
     category: str,
     region: str,
     importance: str,
+    entry_mode: str,
     title: str,
     summary: str,
     why_it_matters: str,
@@ -530,6 +720,9 @@ def _build_issue_payload(
     horizon: str,
     tickers: list[str],
     tags: list[str],
+    subjects: list[dict[str, str]],
+    industries: list[str],
+    event_kind: str,
     sources: list[dict[str, Any]],
     story: str,
     story_thesis: str,
@@ -539,6 +732,8 @@ def _build_issue_payload(
     state_status: str,
     state_bias: str,
     net_effect: str,
+    derive_state: bool,
+    dedupe_key: str,
 ) -> dict[str, Any]:
     now = _kst_now()
     payload: dict[str, Any] = {
@@ -551,6 +746,7 @@ def _build_issue_payload(
         "category": category,
         "region": region,
         "importance": importance,
+        "entry_mode": entry_mode,
         "horizon": horizon,
         "title": title,
         "summary": summary,
@@ -558,8 +754,13 @@ def _build_issue_payload(
         "portfolio_link": portfolio_link,
         "tickers": tickers,
         "tags": tags,
+        "subjects": subjects,
+        "industries": industries,
+        "derive_state": derive_state,
         "sources": sources,
     }
+    if event_kind.strip():
+        payload["event_kind"] = event_kind.strip()
     if story.strip():
         payload["story"] = story.strip()
     if story_thesis.strip():
@@ -576,6 +777,8 @@ def _build_issue_payload(
         payload["state_bias"] = state_bias.strip()
     if net_effect.strip():
         payload["net_effect"] = net_effect.strip()
+    if dedupe_key.strip():
+        payload["dedupe_key"] = dedupe_key.strip()
     return payload
 
 
@@ -681,6 +884,7 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
     category = _normalize_category(str(normalized.get("category", "stock_bond")))
     region = _normalize_region(str(normalized.get("region", "GLOBAL")))
     importance = _normalize_importance(str(normalized.get("importance", "medium")))
+    entry_mode = _normalize_entry_mode(str(normalized.get("entry_mode", "issue")))
 
     title = str(normalized.get("title", "")).strip()
     summary = str(normalized.get("summary", "")).strip()
@@ -703,6 +907,11 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
     else:
         tags = []
 
+    subjects = _normalize_subjects_for_storage(normalized.get("subjects", []))
+    industries = _normalize_industries_for_storage(normalized.get("industries", []))
+    event_kind = _normalize_event_kind(str(normalized.get("event_kind", "")))
+    derive_state = _coerce_bool(normalized.get("derive_state"), default=(entry_mode == "issue"))
+    dedupe_key = _normalize_dedupe_key(str(normalized.get("dedupe_key", "")))
     sources = _normalize_sources_for_storage(normalized.get("sources"))
     state_key_raw = str(normalized.get("state_key", "")).strip()
     state_label = str(normalized.get("state_label", "")).strip()
@@ -724,11 +933,23 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
     normalized["category"] = category
     normalized["region"] = region
     normalized["importance"] = importance
+    normalized["entry_mode"] = entry_mode
     normalized["title"] = title
     normalized["summary"] = summary
     normalized["tickers"] = tickers
     normalized["tags"] = tags
+    normalized["subjects"] = subjects
+    normalized["industries"] = industries
+    normalized["derive_state"] = derive_state
     normalized["sources"] = sources
+    if event_kind:
+        normalized["event_kind"] = event_kind
+    elif "event_kind" in normalized:
+        normalized.pop("event_kind", None)
+    if dedupe_key:
+        normalized["dedupe_key"] = dedupe_key
+    elif "dedupe_key" in normalized:
+        normalized.pop("dedupe_key", None)
     if state_key_raw:
         normalized["state_key"] = _normalize_state_key(state_key_raw)
     elif "state_key" in normalized:
@@ -741,6 +962,12 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
         normalized["state_bias"] = _normalize_state_bias(state_bias_raw)
     if net_effect:
         normalized["net_effect"] = net_effect
+    if entry_mode == "brief" and not subjects and not industries and not event_kind:
+        raise ValueError("brief entry requires at least one of subjects, industries, or event_kind")
+    if entry_mode == "brief" and "dedupe_key" not in normalized:
+        auto_key = _auto_dedupe_key(normalized)
+        if auto_key:
+            normalized["dedupe_key"] = auto_key
     return normalized
 
 
@@ -748,14 +975,16 @@ def _upsert_sqlite_payload(conn: sqlite3.Connection, payload: dict[str, Any]) ->
     conn.execute(
         """
         INSERT INTO world_issue_entries (
-            event_id, as_of, issue_date, category, region, importance, logged_at, title, payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            event_id, as_of, issue_date, category, region, importance, entry_mode, dedupe_key, logged_at, title, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(event_id) DO UPDATE SET
             as_of=excluded.as_of,
             issue_date=excluded.issue_date,
             category=excluded.category,
             region=excluded.region,
             importance=excluded.importance,
+            entry_mode=excluded.entry_mode,
+            dedupe_key=excluded.dedupe_key,
             logged_at=excluded.logged_at,
             title=excluded.title,
             payload_json=excluded.payload_json
@@ -767,6 +996,8 @@ def _upsert_sqlite_payload(conn: sqlite3.Connection, payload: dict[str, Any]) ->
             str(payload.get("category", "")),
             str(payload.get("region", "")),
             str(payload.get("importance", "")),
+            str(payload.get("entry_mode", "issue")),
+            str(payload.get("dedupe_key", "")),
             str(payload.get("logged_at", "")),
             str(payload.get("title", "")),
             json.dumps(payload, ensure_ascii=False),
@@ -787,7 +1018,9 @@ def _taxonomy_entries_from_payload(payload: dict[str, Any]) -> list[tuple[str, s
     category = str(payload.get("category", "")).strip()
     region = str(payload.get("region", "")).strip()
     importance = str(payload.get("importance", "")).strip()
+    entry_mode = str(payload.get("entry_mode", "")).strip()
     story = str(payload.get("story", "")).strip()
+    event_kind = str(payload.get("event_kind", "")).strip()
     state_key = str(payload.get("state_key", "")).strip()
     net_effect = str(payload.get("net_effect", "")).strip()
 
@@ -797,8 +1030,12 @@ def _taxonomy_entries_from_payload(payload: dict[str, Any]) -> list[tuple[str, s
         entries.append(("region", region, "system"))
     if importance:
         entries.append(("importance", importance, "system"))
+    if entry_mode:
+        entries.append(("entry_mode", entry_mode, "system"))
     if story:
         entries.append(("story", story, "observed"))
+    if event_kind:
+        entries.append(("event_kind", event_kind, "observed"))
     if state_key:
         entries.append(("state_key", state_key, "observed"))
     if net_effect:
@@ -809,6 +1046,19 @@ def _taxonomy_entries_from_payload(payload: dict[str, Any]) -> list[tuple[str, s
 
     for ticker in [str(item).strip().upper() for item in payload.get("tickers", []) if str(item).strip()]:
         entries.append(("ticker", ticker, "observed"))
+
+    for subject in payload.get("subjects", []):
+        if not isinstance(subject, dict):
+            continue
+        name = str(subject.get("name", "")).strip()
+        subject_type = str(subject.get("type", "")).strip()
+        if name:
+            entries.append(("subject", name, "observed"))
+        if subject_type:
+            entries.append(("subject_type", subject_type, "observed"))
+
+    for industry in [str(item).strip() for item in payload.get("industries", []) if str(item).strip()]:
+        entries.append(("industry", industry, "observed"))
 
     deduped: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -943,9 +1193,14 @@ def _taxonomy_type_label(value: str) -> str:
         "category": "분류",
         "region": "지역",
         "importance": "중요도",
+        "entry_mode": "엔트리 모드",
         "story": "스토리",
         "tag": "태그",
         "ticker": "티커",
+        "subject": "주체",
+        "subject_type": "주체 유형",
+        "industry": "산업",
+        "event_kind": "이벤트 유형",
         "state_key": "상태 키",
         "net_effect": "순효과",
     }
@@ -1225,6 +1480,8 @@ def _read_current_state_rows(
 
 
 def _state_key_from_issue(payload: dict[str, Any]) -> str:
+    if not _coerce_bool(payload.get("derive_state"), default=True):
+        return ""
     explicit = str(payload.get("state_key", "")).strip()
     if explicit:
         return _normalize_state_key(explicit)
@@ -1383,6 +1640,7 @@ def _read_filtered_rows_from_sqlite(
     category_filter: str,
     region_filter: str,
     importance_filter: str,
+    entry_mode_filter: str,
 ) -> list[dict[str, Any]]:
     if not db_path.exists():
         return []
@@ -1399,6 +1657,9 @@ def _read_filtered_rows_from_sqlite(
     if importance_filter != "all":
         where.append("importance = ?")
         params.append(importance_filter)
+    if entry_mode_filter != "all":
+        where.append("entry_mode = ?")
+        params.append(entry_mode_filter)
 
     query = (
         "SELECT payload_json FROM world_issue_entries "
@@ -1425,11 +1686,13 @@ def _read_filtered_rows_from_sqlite(
     return rows
 
 
-def _load_filtered_rows(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str, Path, Path, dt.date, dt.date]:
+def _load_filtered_rows(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str, Path, dt.date, dt.date]:
     start_date, end_date = _resolve_date_window(args)
     category_filter, region_filter, importance_filter = _resolve_filter_tokens(args)
+    entry_mode_filter = str(getattr(args, "entry_mode", "issue")).strip().lower()
+    if entry_mode_filter != "all":
+        entry_mode_filter = _normalize_entry_mode(entry_mode_filter)
 
-    log_path = _ensure_log(args.base_dir)
     db_path = _resolve_db_path(args.base_dir, args.db_file)
 
     sqlite_rows = _read_filtered_rows_from_sqlite(
@@ -1439,46 +1702,20 @@ def _load_filtered_rows(args: argparse.Namespace) -> tuple[list[dict[str, Any]],
         category_filter=category_filter,
         region_filter=region_filter,
         importance_filter=importance_filter,
+        entry_mode_filter=entry_mode_filter,
     )
-    if sqlite_rows:
-        return sqlite_rows, "sqlite", log_path, db_path, start_date, end_date
-
-    json_rows = _filter_rows(_read_jsonl(log_path), args)
-    return json_rows, "jsonl", log_path, db_path, start_date, end_date
-
-
-def _migrate_jsonl_to_sqlite(log_path: Path, db_path: Path) -> tuple[int, int, int, int]:
-    if not log_path.exists():
-        return 0, 0, 0, _count_sqlite_rows(db_path)
-
-    rows = _read_jsonl(log_path)
-    total = len(rows)
-    migrated = 0
-    skipped = 0
-
-    with _connect_db(db_path) as conn:
-        _init_db(conn)
-        for raw in rows:
-            if not isinstance(raw, dict):
-                skipped += 1
-                continue
-            try:
-                payload = _normalize_payload_for_storage(raw)
-            except ValueError:
-                skipped += 1
-                continue
-            _upsert_sqlite_payload(conn, payload)
-            migrated += 1
-        _rebuild_taxonomy_index(conn)
-        conn.commit()
-
-    total_after = _count_sqlite_rows(db_path)
-    return total, migrated, skipped, total_after
+    return _filter_rows(sqlite_rows, args), "sqlite", db_path, start_date, end_date
 
 
 def _filter_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
     start_date, end_date = _resolve_date_window(args)
     category_filter, region_filter, importance_filter = _resolve_filter_tokens(args)
+    entry_mode_filter = str(getattr(args, "entry_mode", "issue")).strip().lower()
+    if entry_mode_filter != "all":
+        entry_mode_filter = _normalize_entry_mode(entry_mode_filter)
+    subject_filter = str(getattr(args, "subject", "")).strip().casefold()
+    industry_filter = str(getattr(args, "industry", "")).strip().casefold()
+    event_kind_filter = _normalize_event_kind(str(getattr(args, "event_kind", "")).strip())
 
     filtered: list[dict[str, Any]] = []
     for row in rows:
@@ -1493,6 +1730,7 @@ def _filter_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[d
         category = _normalize_category(str(row.get("category", "stock_bond")))
         region = _normalize_region(str(row.get("region", "GLOBAL")))
         importance = _normalize_importance(str(row.get("importance", "medium")))
+        entry_mode = _normalize_entry_mode(str(row.get("entry_mode", "issue")))
 
         if category_filter != "all" and category != category_filter:
             continue
@@ -1500,12 +1738,30 @@ def _filter_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[d
             continue
         if importance_filter != "all" and importance != importance_filter:
             continue
+        if entry_mode_filter != "all" and entry_mode != entry_mode_filter:
+            continue
+
+        subjects = _normalize_subjects_for_storage(row.get("subjects", []))
+        industries = _normalize_industries_for_storage(row.get("industries", []))
+        event_kind = _normalize_event_kind(str(row.get("event_kind", "")))
+
+        if subject_filter and not any(subject_filter in str(item.get("name", "")).casefold() for item in subjects):
+            continue
+        if industry_filter and not any(industry_filter in item.casefold() for item in industries):
+            continue
+        if event_kind_filter and event_kind != event_kind_filter:
+            continue
 
         normalized = dict(row)
         normalized["category"] = category
         normalized["region"] = region
         normalized["importance"] = importance
+        normalized["entry_mode"] = entry_mode
         normalized["as_of"] = as_of.isoformat()
+        normalized["subjects"] = subjects
+        normalized["industries"] = industries
+        if event_kind:
+            normalized["event_kind"] = event_kind
         filtered.append(normalized)
 
     filtered.sort(
@@ -1543,6 +1799,13 @@ def _label_importance(importance: str) -> str:
     }.get(importance, importance)
 
 
+def _label_entry_mode(entry_mode: str) -> str:
+    return {
+        "issue": "이슈",
+        "brief": "브리프",
+    }.get(entry_mode, entry_mode)
+
+
 def _source_names(row: dict[str, Any]) -> str:
     sources = row.get("sources")
     if not isinstance(sources, list):
@@ -1563,23 +1826,57 @@ def _format_as_of_text(row: dict[str, Any]) -> str:
     return as_of.strftime("%Y-%m-%d %H:%M KST")
 
 
+def _subject_display(row: dict[str, Any]) -> str:
+    out: list[str] = []
+    for item in row.get("subjects", []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        subject_type = str(item.get("type", "")).strip()
+        if not name:
+            continue
+        if subject_type and subject_type != "other":
+            out.append(f"{name} ({subject_type})")
+        else:
+            out.append(name)
+    return ", ".join(out)
+
+
+def _humanize_event_kind(value: str) -> str:
+    return value.replace("_", " ").strip()
+
+
 def _rows_to_frame(rows: list[dict[str, Any]], *, limit: int) -> pd.DataFrame:
+    limited = rows[: max(1, limit)]
+    has_brief_fields = any(
+        str(row.get("entry_mode", "issue")) != "issue"
+        or row.get("subjects")
+        or row.get("industries")
+        or str(row.get("event_kind", "")).strip()
+        for row in limited
+    )
     view_rows: list[dict[str, Any]] = []
-    for row in rows[: max(1, limit)]:
-        view_rows.append(
-            {
-                "As Of (KST)": _format_as_of_text(row),
-                "Category": _label_category(str(row.get("category", ""))),
-                "Region": _label_region(str(row.get("region", ""))),
-                "Importance": _label_importance(str(row.get("importance", ""))),
-                "Title": str(row.get("title", "")),
-                "Story": str(row.get("story", "")),
-                "Summary": str(row.get("summary", "")),
-                "Tickers": ", ".join([str(t) for t in row.get("tickers", []) if str(t).strip()]),
-                "Tags": ", ".join([str(t) for t in row.get("tags", []) if str(t).strip()]),
-                "Sources": _source_names(row),
-            }
-        )
+    for row in limited:
+        view_row = {
+            "As Of (KST)": _format_as_of_text(row),
+            "Category": _label_category(str(row.get("category", ""))),
+            "Region": _label_region(str(row.get("region", ""))),
+            "Importance": _label_importance(str(row.get("importance", ""))),
+            "Title": str(row.get("title", "")),
+            "Story": str(row.get("story", "")),
+            "Summary": str(row.get("summary", "")),
+            "Tickers": ", ".join([str(t) for t in row.get("tickers", []) if str(t).strip()]),
+            "Tags": ", ".join([str(t) for t in row.get("tags", []) if str(t).strip()]),
+            "Sources": _source_names(row),
+        }
+        if has_brief_fields:
+            view_row["Entry Mode"] = _label_entry_mode(str(row.get("entry_mode", "issue")))
+            view_row["Subjects"] = _subject_display(row)
+            view_row["Industries"] = ", ".join(
+                [str(item) for item in row.get("industries", []) if str(item).strip()]
+            )
+            view_row["Event Kind"] = _humanize_event_kind(str(row.get("event_kind", "")))
+        view_rows.append(view_row)
     return pd.DataFrame(view_rows)
 
 
@@ -1792,17 +2089,101 @@ def _build_counsel_hooks(rows: list[dict[str, Any]]) -> list[str]:
     return hooks[:5]
 
 
+def _find_existing_event_by_dedupe_key(
+    conn: sqlite3.Connection,
+    *,
+    dedupe_key: str,
+    entry_mode: str,
+    as_of: dt.datetime,
+    dedupe_days: int,
+) -> dict[str, Any] | None:
+    token = _normalize_dedupe_key(dedupe_key)
+    if not token:
+        return None
+
+    where = ["dedupe_key = ?", "entry_mode = ?"]
+    params: list[Any] = [token, _normalize_entry_mode(entry_mode)]
+    if dedupe_days > 0:
+        start_date = (as_of.date() - dt.timedelta(days=max(1, dedupe_days) - 1)).isoformat()
+        where.append("issue_date >= ?")
+        params.append(start_date)
+
+    row = conn.execute(
+        f"""
+        SELECT event_id, as_of, title
+        FROM world_issue_entries
+        WHERE {' AND '.join(where)}
+        ORDER BY as_of DESC, logged_at DESC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def _save_payload_without_manual_state(
+    *,
+    db_path: Path,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    normalized_payload = _normalize_payload_for_storage(payload)
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        _upsert_sqlite_payload(conn, normalized_payload)
+        state_payload = _upsert_derived_state_for_issue(conn, normalized_payload)
+        _upsert_taxonomy_for_payload(conn, normalized_payload)
+        conn.commit()
+
+    print(f"Upserted SQLite world issue: {db_path}")
+    print(f"event_id={normalized_payload['event_id']}")
+    if state_payload is not None:
+        print(f"state_id={state_payload['state_id']}")
+        print(f"state_key={state_payload['state_key']}")
+    return normalized_payload, state_payload
+
+
+def _read_import_payloads(path: Path) -> list[dict[str, Any]]:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+
+    if path.suffix.lower() == ".jsonl":
+        rows: list[dict[str, Any]] = []
+        for line_no, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise SystemExit(f"JSONL parse error in {path}:{line_no}: {e.msg}") from e
+            if not isinstance(item, dict):
+                raise SystemExit(f"JSONL row must be an object: {path}:{line_no}")
+            rows.append(item)
+        return rows
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"JSON parse error in {path}: {e.msg}") from e
+
+    if isinstance(parsed, dict):
+        return [parsed]
+    if isinstance(parsed, list) and all(isinstance(item, dict) for item in parsed):
+        return list(parsed)
+    raise SystemExit(f"Unsupported import payload shape in {path}. Use JSON object, JSON array, or JSONL objects.")
+
+
 def _handle_init(args: argparse.Namespace) -> int:
-    log_path = _ensure_log(args.base_dir)
     db_path = _ensure_db(args.base_dir, args.db_file)
-    print(f"Initialized JSONL mirror: {log_path}")
     print(f"Initialized SQLite store: {db_path}")
     print("Initialized taxonomy index: world_issue_taxonomy")
     return 0
 
 
 def _handle_add(args: argparse.Namespace) -> int:
-    log_path = _ensure_log(args.base_dir)
     db_path = _ensure_db(args.base_dir, args.db_file)
     sources = _parse_sources(args)
     if not sources:
@@ -1832,6 +2213,7 @@ def _handle_add(args: argparse.Namespace) -> int:
         category=_normalize_category(args.category),
         region=_normalize_region(args.region),
         importance=_normalize_importance(args.importance),
+        entry_mode="issue",
         title=args.title.strip(),
         summary=args.summary.strip(),
         why_it_matters=(args.why_it_matters or "").strip(),
@@ -1839,6 +2221,9 @@ def _handle_add(args: argparse.Namespace) -> int:
         horizon=(args.horizon or "").strip(),
         tickers=_normalize_tickers(_split_csv(args.tickers)),
         tags=_unique_preserve_order(_split_csv(args.tags)),
+        subjects=_normalize_subjects_for_storage(args.subject),
+        industries=_normalize_industries_for_storage(args.industries),
+        event_kind=_normalize_event_kind(args.event_kind or ""),
         sources=sources,
         story=(args.story or "").strip(),
         story_thesis=(args.story_thesis or "").strip(),
@@ -1848,6 +2233,8 @@ def _handle_add(args: argparse.Namespace) -> int:
         state_status=(args.state_status or "").strip(),
         state_bias=(args.state_bias or "").strip(),
         net_effect=(args.net_effect or "").strip(),
+        derive_state=_coerce_bool(getattr(args, "derive_state", None), default=True),
+        dedupe_key=_normalize_dedupe_key(args.dedupe_key or ""),
     )
 
     if args.dry_run:
@@ -1857,6 +2244,18 @@ def _handle_add(args: argparse.Namespace) -> int:
     normalized_payload = _normalize_payload_for_storage(payload)
     with _connect_db(db_path) as conn:
         _init_db(conn)
+        if getattr(args, "skip_if_duplicate", False):
+            existing = _find_existing_event_by_dedupe_key(
+                conn,
+                dedupe_key=str(normalized_payload.get("dedupe_key", "")).strip(),
+                entry_mode=str(normalized_payload.get("entry_mode", "issue")).strip(),
+                as_of=_issue_as_of(normalized_payload),
+                dedupe_days=max(0, int(getattr(args, "dedupe_days", 0))),
+            )
+            if existing is not None:
+                print(f"Skipped duplicate world issue: {db_path}")
+                print(f"existing_event_id={existing['event_id']}")
+                return 0
         _upsert_sqlite_payload(conn, normalized_payload)
         state_payload: dict[str, Any] | None = None
         state_key = str(normalized_payload.get("state_key", "")).strip()
@@ -1912,10 +2311,6 @@ def _handle_add(args: argparse.Namespace) -> int:
         _upsert_taxonomy_for_payload(conn, normalized_payload)
         conn.commit()
 
-    if not args.no_jsonl_mirror:
-        _append_jsonl(log_path, normalized_payload)
-        print(f"Appended JSONL mirror: {log_path}")
-
     print(f"Upserted SQLite world issue: {db_path}")
     print(f"event_id={normalized_payload['event_id']}")
     if state_payload is not None:
@@ -1924,14 +2319,125 @@ def _handle_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_brief_add(args: argparse.Namespace) -> int:
+    db_path = _ensure_db(args.base_dir, args.db_file)
+    sources = _parse_sources(args)
+    if not sources:
+        raise SystemExit("At least one source is required. Use --source or --sources-json/--sources-file")
+
+    payload = _build_issue_payload(
+        as_of=args.as_of or _kst_now(),
+        category=_normalize_category(args.category),
+        region=_normalize_region(args.region),
+        importance=_normalize_importance(args.importance),
+        entry_mode="brief",
+        title=args.title.strip(),
+        summary=args.summary.strip(),
+        why_it_matters=(args.why_it_matters or "").strip(),
+        portfolio_link=(args.portfolio_link or "").strip(),
+        horizon=(args.horizon or "").strip(),
+        tickers=_normalize_tickers(_split_csv(args.tickers)),
+        tags=_unique_preserve_order(_split_csv(args.tags)),
+        subjects=_normalize_subjects_for_storage(args.subject),
+        industries=_normalize_industries_for_storage(args.industry),
+        event_kind=_normalize_event_kind(args.event_kind or ""),
+        sources=sources,
+        story="",
+        story_thesis="",
+        story_checkpoint="",
+        state_key="",
+        state_label="",
+        state_status="",
+        state_bias="",
+        net_effect="",
+        derive_state=False,
+        dedupe_key=_normalize_dedupe_key(args.dedupe_key or ""),
+    )
+
+    if args.dry_run:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    normalized_payload = _normalize_payload_for_storage(payload)
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        if args.skip_if_duplicate:
+            existing = _find_existing_event_by_dedupe_key(
+                conn,
+                dedupe_key=str(normalized_payload.get("dedupe_key", "")).strip(),
+                entry_mode="brief",
+                as_of=_issue_as_of(normalized_payload),
+                dedupe_days=max(0, int(args.dedupe_days)),
+            )
+            if existing is not None:
+                print(f"Skipped duplicate brief: {db_path}")
+                print(f"existing_event_id={existing['event_id']}")
+                return 0
+
+    _save_payload_without_manual_state(
+        db_path=db_path,
+        payload=normalized_payload,
+    )
+    return 0
+
+
+def _handle_brief_import(args: argparse.Namespace) -> int:
+    db_path = _ensure_db(args.base_dir, args.db_file)
+    import_path = Path(args.from_file).expanduser()
+    rows = _read_import_payloads(import_path)
+
+    prepared: list[dict[str, Any]] = []
+    for raw in rows:
+        merged = dict(raw)
+        merged.setdefault("category", args.category)
+        merged.setdefault("region", args.region)
+        merged.setdefault("importance", args.importance)
+        merged.setdefault("horizon", args.horizon)
+        merged["entry_mode"] = "brief"
+        merged["derive_state"] = False
+        normalized = _normalize_payload_for_storage(merged)
+        if not normalized.get("sources"):
+            raise SystemExit("brief-import rows require sources[]")
+        prepared.append(normalized)
+
+    if args.dry_run:
+        print(json.dumps(prepared, ensure_ascii=False, indent=2))
+        return 0
+
+    inserted = 0
+    skipped = 0
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        for payload in prepared:
+            if args.skip_if_duplicate:
+                existing = _find_existing_event_by_dedupe_key(
+                    conn,
+                    dedupe_key=str(payload.get("dedupe_key", "")).strip(),
+                    entry_mode="brief",
+                    as_of=_issue_as_of(payload),
+                    dedupe_days=max(0, int(args.dedupe_days)),
+                )
+                if existing is not None:
+                    skipped += 1
+                    continue
+            _upsert_sqlite_payload(conn, payload)
+            _upsert_derived_state_for_issue(conn, payload)
+            _upsert_taxonomy_for_payload(conn, payload)
+            inserted += 1
+        conn.commit()
+
+    print(f"Imported brief rows into SQLite: {db_path}")
+    print(f"inserted={inserted} skipped_duplicates={skipped} total_input={len(prepared)}")
+    return 0
+
+
 def _handle_list(args: argparse.Namespace) -> int:
-    filtered, backend, log_path, db_path, _, _ = _load_filtered_rows(args)
+    filtered, backend, db_path, _, _ = _load_filtered_rows(args)
 
     if args.format == "json":
         payload = {
             "timezone": DEFAULT_TZ,
             "backend": backend,
-            "log_path": str(log_path),
             "db_path": str(db_path),
             "count": len(filtered),
             "rows": filtered[: max(1, args.limit)],
@@ -2025,7 +2531,7 @@ def _build_report_text(
     start_date: dt.date,
     end_date: dt.date,
     max_items: int,
-    log_path: Path,
+    db_path: Path,
     title: str | None,
 ) -> str:
     now = _kst_now()
@@ -2049,7 +2555,7 @@ def _build_report_text(
     lines.append(f"- 작성 시각(KST): {now.strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"- 데이터 범위(KST): {start_date.isoformat()} ~ {end_date.isoformat()}")
     lines.append(f"- 최신 로그 시각(KST): {latest}")
-    lines.append(f"- 원본 로그: `{log_path}`")
+    lines.append(f"- 저장소(SQLite): `{db_path}`")
     lines.append("")
 
     lines.append("## 0) 현재 유효한 상태 (State Snapshots)")
@@ -2102,8 +2608,8 @@ def _build_report_text(
 
 
 def _handle_report(args: argparse.Namespace) -> int:
-    filtered, backend, log_path, db_path, start_date, end_date = _load_filtered_rows(args)
-    source_path = db_path if backend == "sqlite" else log_path
+    filtered, backend, db_path, start_date, end_date = _load_filtered_rows(args)
+    filtered = [row for row in filtered if _normalize_entry_mode(str(row.get("entry_mode", "issue"))) == "issue"]
     state_rows = _read_current_state_rows(
         db_path=db_path,
         limit=max(1, args.max_items),
@@ -2115,21 +2621,10 @@ def _handle_report(args: argparse.Namespace) -> int:
         start_date=start_date,
         end_date=end_date,
         max_items=max(1, args.max_items),
-        log_path=source_path,
+        db_path=db_path,
         title=args.title,
     )
     _emit_text(report_text + "\n", args.out)
-    return 0
-
-
-def _handle_migrate(args: argparse.Namespace) -> int:
-    db_path = _ensure_db(args.base_dir, args.db_file)
-    log_path = Path(args.from_jsonl).expanduser() if args.from_jsonl else _ensure_log(args.base_dir)
-
-    total, migrated, skipped, total_after = _migrate_jsonl_to_sqlite(log_path, db_path)
-    print(f"Migration source JSONL: {log_path}")
-    print(f"Migration target SQLite: {db_path}")
-    print(f"processed={total} migrated={migrated} skipped={skipped} total_rows_in_sqlite={total_after}")
     return 0
 
 
@@ -2140,7 +2635,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("init", help="외부 세계 이슈 로그 파일(JSONL+SQLite) 초기화")
+    sub.add_parser("init", help="외부 세계 이슈 SQLite 저장소 초기화")
 
     p_add = sub.add_parser("add", help="외부 세계 이슈 1건 기록")
     p_add.add_argument("--as-of", type=_parse_datetime, default=None, help="이슈 기준 시각 (ISO 8601, 기본: 현재 KST)")
@@ -2154,9 +2649,31 @@ def _build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--horizon", default="1~3개월", help="영향 기간")
     p_add.add_argument("--tickers", default="", help="관련 티커 (콤마 구분)")
     p_add.add_argument("--tags", default="", help="태그 (콤마 구분)")
+    p_add.add_argument(
+        "--subject",
+        action="append",
+        default=[],
+        help="주체 입력: '이름|type' (예: Donald Trump|politician, Jensen Huang|business_leader)",
+    )
+    p_add.add_argument("--industries", default="", help="관련 산업/업종 (콤마 구분)")
+    p_add.add_argument("--event-kind", default="", help="이벤트 유형 (예: regulation, statement, industry_trend)")
     p_add.add_argument("--story", default="", help="시장 스토리 라벨 (예: 디스인플레이션+성장 둔화)")
     p_add.add_argument("--story-thesis", default="", help="스토리 핵심 테제 1문장")
     p_add.add_argument("--story-checkpoint", default="", help="스토리 체크포인트(무효화/확인 조건)")
+    p_add.add_argument(
+        "--derive-state",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="story/state_key 기반 derived 상태 생성 여부 (기본: 켜짐)",
+    )
+    p_add.add_argument("--dedupe-key", default="", help="자동화 중복 방지 키")
+    p_add.add_argument(
+        "--skip-if-duplicate",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="같은 dedupe_key가 최근 기간에 있으면 저장 생략",
+    )
+    p_add.add_argument("--dedupe-days", type=int, default=7, help="중복 체크 기간(일)")
     p_add.add_argument("--state-key", default="", help="상태 스냅샷 키 (예: oil_geopolitical_risk)")
     p_add.add_argument("--state-label", default="", help="상태 스냅샷 라벨")
     p_add.add_argument(
@@ -2207,12 +2724,60 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_add.add_argument("--sources-json", default="", help="출처 JSON 문자열(배열)")
     p_add.add_argument("--sources-file", default=None, help="출처 JSON 파일 경로")
-    p_add.add_argument(
-        "--no-jsonl-mirror",
-        action="store_true",
-        help="JSONL 미러 파일 append를 생략하고 SQLite만 기록",
-    )
     p_add.add_argument("--dry-run", action="store_true", help="저장 없이 payload 확인")
+
+    p_brief = sub.add_parser("brief-add", help="주체/산업 브리프 메모 1건 기록")
+    p_brief.add_argument("--as-of", type=_parse_datetime, default=None, help="브리프 기준 시각 (ISO 8601, 기본: 현재 KST)")
+    p_brief.add_argument("--category", choices=CATEGORY_CHOICES, default="emerging", help="이슈 분류")
+    p_brief.add_argument("--region", choices=REGION_CHOICES, default="GLOBAL", help="지역 분류")
+    p_brief.add_argument("--importance", choices=IMPORTANCE_CHOICES, default="low", help="중요도")
+    p_brief.add_argument("--title", required=True, help="브리프 제목")
+    p_brief.add_argument("--summary", required=True, help="짧은 코멘트")
+    p_brief.add_argument("--why-it-matters", default="", help="왜 중요한지")
+    p_brief.add_argument("--portfolio-link", default="", help="포트폴리오 상담 반영 포인트")
+    p_brief.add_argument("--horizon", default="수일~수주", help="영향 기간")
+    p_brief.add_argument("--tickers", default="", help="관련 티커 (콤마 구분)")
+    p_brief.add_argument("--tags", default="", help="태그 (콤마 구분)")
+    p_brief.add_argument(
+        "--subject",
+        action="append",
+        default=[],
+        help="주체 입력: '이름|type' (예: Donald Trump|politician)",
+    )
+    p_brief.add_argument("--industry", action="append", default=[], help="산업/업종 라벨 (여러 번 지정 가능)")
+    p_brief.add_argument("--event-kind", default="", help="이벤트 유형 (예: statement, industry_trend)")
+    p_brief.add_argument("--dedupe-key", default="", help="자동화 중복 방지 키")
+    p_brief.add_argument(
+        "--skip-if-duplicate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="같은 dedupe_key가 최근 기간에 있으면 저장 생략 (기본: 켜짐)",
+    )
+    p_brief.add_argument("--dedupe-days", type=int, default=7, help="중복 체크 기간(일)")
+    p_brief.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="출처 단축 입력: '매체명|URL|게시시각(옵션)|메모(옵션)'",
+    )
+    p_brief.add_argument("--sources-json", default="", help="출처 JSON 문자열(배열)")
+    p_brief.add_argument("--sources-file", default=None, help="출처 JSON 파일 경로")
+    p_brief.add_argument("--dry-run", action="store_true", help="저장 없이 payload 확인")
+
+    p_brief_import = sub.add_parser("brief-import", help="주체/산업 브리프 JSON/JSONL 배치 입력")
+    p_brief_import.add_argument("--from-file", required=True, help="입력 파일 경로 (.json/.jsonl)")
+    p_brief_import.add_argument("--category", choices=CATEGORY_CHOICES, default="emerging", help="기본 분류")
+    p_brief_import.add_argument("--region", choices=REGION_CHOICES, default="GLOBAL", help="기본 지역")
+    p_brief_import.add_argument("--importance", choices=IMPORTANCE_CHOICES, default="low", help="기본 중요도")
+    p_brief_import.add_argument("--horizon", default="수일~수주", help="기본 영향 기간")
+    p_brief_import.add_argument(
+        "--skip-if-duplicate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="같은 dedupe_key가 최근 기간에 있으면 저장 생략 (기본: 켜짐)",
+    )
+    p_brief_import.add_argument("--dedupe-days", type=int, default=7, help="중복 체크 기간(일)")
+    p_brief_import.add_argument("--dry-run", action="store_true", help="저장 없이 정규화 payload 확인")
 
     p_list = sub.add_parser("list", help="이슈 로그 조회")
     p_list.add_argument("--start", type=_parse_date, default=None, help="시작일 (YYYY-MM-DD)")
@@ -2221,6 +2786,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--category", choices=["all"] + CATEGORY_CHOICES, default="all", help="카테고리 필터")
     p_list.add_argument("--region", choices=["all"] + REGION_CHOICES, default="all", help="지역 필터")
     p_list.add_argument("--importance", choices=["all"] + IMPORTANCE_CHOICES, default="all", help="중요도 필터")
+    p_list.add_argument("--entry-mode", choices=["all"] + ENTRY_MODE_CHOICES, default="issue", help="엔트리 모드 필터")
+    p_list.add_argument("--subject", default="", help="주체명 부분일치 필터")
+    p_list.add_argument("--industry", default="", help="산업명 부분일치 필터")
+    p_list.add_argument("--event-kind", default="", help="이벤트 유형 필터")
     p_list.add_argument("--limit", type=int, default=50, help="표시 건수")
     p_list.add_argument("--format", choices=["md", "csv", "json", "pretty"], default="md", help="출력 포맷")
     p_list.add_argument("--out", default=None, help="출력 파일 경로")
@@ -2268,9 +2837,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="기존 derived 상태를 삭제하지 않고 추가만 수행",
     )
 
-    p_migrate = sub.add_parser("migrate", help="기존 JSONL 로그를 SQLite로 이관")
-    p_migrate.add_argument("--from-jsonl", default=None, help="마이그레이션할 JSONL 경로 (기본: base-dir/world_issue_log.jsonl)")
-
     return parser
 
 
@@ -2282,6 +2848,10 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_init(args)
     if args.cmd == "add":
         return _handle_add(args)
+    if args.cmd == "brief-add":
+        return _handle_brief_add(args)
+    if args.cmd == "brief-import":
+        return _handle_brief_import(args)
     if args.cmd == "list":
         return _handle_list(args)
     if args.cmd == "report":
@@ -2292,9 +2862,6 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_states(args)
     if args.cmd == "state-sync":
         return _handle_state_sync(args)
-    if args.cmd == "migrate":
-        return _handle_migrate(args)
-
     raise SystemExit(f"Unknown command: {args.cmd}")
 
 

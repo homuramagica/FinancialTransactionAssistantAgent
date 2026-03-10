@@ -37,6 +37,5 @@ portfolio/counsel_sessions/
 **/*_log.jsonl
 **/*_log.sqlite3
 
-# Share world memory database/log explicitly
-!portfolio/world_issue_log.jsonl
+# Share world memory database explicitly
 !portfolio/world_issue_log.sqlite3

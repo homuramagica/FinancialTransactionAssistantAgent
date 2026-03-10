@@ -210,27 +210,22 @@ python3 scripts/counsel_memory_cli.py prepare-turn \
 `scripts/world_memory_cli.py`는 속보와 분리된 **중기 템포의 시장 동향 로그**를 누적 저장한다.
 
 - 기본 저장소(SQLite): `portfolio/world_issue_log.sqlite3`
-- 레거시 미러(JSONL): `portfolio/world_issue_log.jsonl`
 - 기본 시간대: `KST(Asia/Seoul)`
 - 기본 철학: raw article 전문보다 `summary`, `why_it_matters`, `portfolio_link`, `story`, `story_thesis`, `story_checkpoint`, `sources`, `tags`, `tickers` 중심의 summary-first memory
 - 2.5 계층: append-only issue log 위에 `world_issue_states`를 얹어, 현재 유효한 상태(`active/watch`)를 별도로 읽는다.
+- 엔트리 모드: `issue`(중기 이슈)와 `brief`(주체/산업 짧은 메모)
 - 기본 분류:
   - `category`: `stock_bond`, `geopolitics`, `emerging`
   - `region`: `US`, `KR`, `GLOBAL`
   - `importance`: `high`, `medium`, `low`
 - `story`, `tags`, `tickers`는 기존 값을 우선 재사용하고, 기존 규격으로 설명이 어려울 때만 새 값을 최소 단위로 추가한다.
 - `state_key`, `net_effect`도 기존 값을 우선 재사용하고, 꼭 필요한 경우에만 새 키를 추가한다.
+- `brief` 메모는 `subjects`, `industries`, `event_kind`, `dedupe_key`를 중심으로 저장하며 기본적으로 derived state를 만들지 않는다.
 
 ## 초기화
 
 ```bash
 python3 scripts/world_memory_cli.py init
-```
-
-## 기존 JSONL 이관
-
-```bash
-python3 scripts/world_memory_cli.py migrate
 ```
 
 ## 이슈 1건 저장
@@ -252,8 +247,8 @@ python3 scripts/world_memory_cli.py add \
   --source "Bloomberg|https://www.bloomberg.com/markets|2026-02-16T07:00:00+09:00"
 ```
 
-기본 동작은 SQLite 저장 + JSONL 미러 append다.
-- SQLite만 저장하려면: `--no-jsonl-mirror`
+기본 동작은 SQLite 저장이다.
+- 자동화 중복 제어가 필요하면 `--dedupe-key`, `--skip-if-duplicate`, `--dedupe-days`를 함께 사용한다.
 
 출처는 최소 1개가 필요하며 아래 방식 중 하나를 사용한다.
 - `--source "매체|URL|게시시각(옵션)|메모(옵션)"` (여러 번 지정 가능)
@@ -264,6 +259,10 @@ python3 scripts/world_memory_cli.py add \
 - `--story`: 이슈를 묶는 상위 내러티브 라벨
 - `--story-thesis`: 핵심 테제 1문장
 - `--story-checkpoint`: 스토리 유지/무효화 체크포인트
+- 주체/산업 확장 필드:
+  - `--subject "이름|type"`: `politician`, `business_leader`, `company`, `institution` 등
+  - `--industries`: 관련 산업/업종 (콤마 구분)
+  - `--event-kind`: `statement`, `regulation`, `industry_trend` 같은 canonical key
 
 상태 전이까지 함께 저장하려면 아래 옵션을 추가한다.
 - `--state-key`: 현재 상태를 묶는 canonical key
@@ -301,6 +300,7 @@ python3 scripts/world_memory_cli.py taxonomy --refresh --format md
 python3 scripts/world_memory_cli.py taxonomy --type story --format pretty
 python3 scripts/world_memory_cli.py taxonomy --type tag --limit 50 --format csv --out reports/world_memory_tags.csv
 python3 scripts/world_memory_cli.py taxonomy --type state_key --format pretty
+python3 scripts/world_memory_cli.py taxonomy --type subject --format pretty
 ```
 
 운영 원칙:
@@ -320,12 +320,44 @@ python3 scripts/world_memory_cli.py state-sync
 - `state-sync`: 기존 issue log에서 `story` 또는 `state_key`를 읽어 derived 상태를 재구성
 - 일반 `add`도 `story`가 있으면 derived 상태를 자동 갱신한다. `state-sync`는 백필/재구성용이다.
 - 수동 상태가 있는 `state_key`는 `state-sync`가 덮어쓰지 않는다.
+- `brief` 엔트리는 `derive_state=false`가 기본이라 `state-sync` 대상에서 제외된다.
+
+## 주체/산업 브리프 저장
+
+```bash
+python3 scripts/world_memory_cli.py brief-add \
+  --title "젠슨 황, AI 수요 발언 유지" \
+  --summary "AI 서버 수요에 대한 자신감 유지 발언." \
+  --subject "Jensen Huang|business_leader" \
+  --subject "NVIDIA|company" \
+  --industry semiconductors \
+  --industry "ai infrastructure" \
+  --event-kind statement \
+  --source "Regular media feed|https://rss.app/feeds/_hc8HiU0HyBWHfWoM.csv|2026-03-10T08:35:00+09:00"
+```
+
+- `brief-add`는 `category=emerging`, `region=GLOBAL`, `importance=low`를 기본값으로 사용한다.
+- 주체/산업/이벤트 중 최소 하나는 있어야 저장된다.
+- 기본 `dedupe_key`는 제목/주체/산업/날짜를 바탕으로 자동 생성된다.
+
+## 자동화용 브리프 배치 입력
+
+```bash
+python3 scripts/world_memory_cli.py brief-import \
+  --from-file tmp/world_memory_briefs.jsonl \
+  --skip-if-duplicate
+```
+
+- 입력 파일은 `.json`, `.jsonl` 모두 지원한다.
+- 각 row는 최소한 `title`, `summary`, `sources[]`를 가져야 한다.
+- `entry_mode`는 자동으로 `brief`, `derive_state`는 자동으로 `false`로 강제된다.
 
 ## 로그 조회
 
 ```bash
 python3 scripts/world_memory_cli.py list --days 14 --format md
 python3 scripts/world_memory_cli.py list --days 30 --category stock_bond --region KR --importance high --format csv --out reports/world_issue_slice.csv
+python3 scripts/world_memory_cli.py list --entry-mode brief --subject Jensen --days 30 --format md
 ```
 
 ## 보고서 생성
