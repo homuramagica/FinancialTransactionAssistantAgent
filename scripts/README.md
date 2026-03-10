@@ -188,8 +188,9 @@ python3 scripts/counsel_memory_cli.py deltas --days 30 --format md
 
 1. 턴 메모리 업서트 (`new/reinforce/update/promote`)
 2. 개인 메모리 히트(top-k)
-3. 최근 월드메모리(기본 21일)
-4. 포트폴리오 펄스(누적수익률/낙폭/상위 보유)
+3. 현재 활성 월드 상태(active/watch state snapshots)
+4. 최근 월드메모리(기본 21일)
+5. 포트폴리오 펄스(누적수익률/낙폭/상위 보유)
 
 ```bash
 python3 scripts/counsel_memory_cli.py prepare-turn \
@@ -211,10 +212,14 @@ python3 scripts/counsel_memory_cli.py prepare-turn \
 - 기본 저장소(SQLite): `portfolio/world_issue_log.sqlite3`
 - 레거시 미러(JSONL): `portfolio/world_issue_log.jsonl`
 - 기본 시간대: `KST(Asia/Seoul)`
+- 기본 철학: raw article 전문보다 `summary`, `why_it_matters`, `portfolio_link`, `story`, `story_thesis`, `story_checkpoint`, `sources`, `tags`, `tickers` 중심의 summary-first memory
+- 2.5 계층: append-only issue log 위에 `world_issue_states`를 얹어, 현재 유효한 상태(`active/watch`)를 별도로 읽는다.
 - 기본 분류:
   - `category`: `stock_bond`, `geopolitics`, `emerging`
   - `region`: `US`, `KR`, `GLOBAL`
   - `importance`: `high`, `medium`, `low`
+- `story`, `tags`, `tickers`는 기존 값을 우선 재사용하고, 기존 규격으로 설명이 어려울 때만 새 값을 최소 단위로 추가한다.
+- `state_key`, `net_effect`도 기존 값을 우선 재사용하고, 꼭 필요한 경우에만 새 키를 추가한다.
 
 ## 초기화
 
@@ -260,6 +265,62 @@ python3 scripts/world_memory_cli.py add \
 - `--story-thesis`: 핵심 테제 1문장
 - `--story-checkpoint`: 스토리 유지/무효화 체크포인트
 
+상태 전이까지 함께 저장하려면 아래 옵션을 추가한다.
+- `--state-key`: 현재 상태를 묶는 canonical key
+- `--state-label`: 읽기 좋은 상태 라벨
+- `--state-status`: `active|watch|resolved|overridden`
+- `--state-bias`: `bullish|bearish|neutral|mixed`
+- `--net-effect`: `oil_up`, `usd_down` 같은 순효과
+- `--supersedes-active`: 같은 `state_key`의 최신 active/watch 상태를 자동 대체
+
+예시:
+
+```bash
+python3 scripts/world_memory_cli.py add \
+  --as-of 2026-02-18T10:20:00+09:00 \
+  --category geopolitics \
+  --region GLOBAL \
+  --importance high \
+  --title "Hormuz disruption risk reprices oil volatility" \
+  --summary "공급 잉여 baseline은 남아 있지만, 해협 리스크가 단기 유가 프리미엄을 다시 밀어 올린다." \
+  --story "공급 여유 vs 지정학 프리미엄" \
+  --story-thesis "평시에는 공급이 넉넉하지만, 충격 시에는 지정학 프리미엄이 가격결정을 덮는다." \
+  --state-key oil_geopolitical_risk \
+  --state-label "유가의 지정학 프리미엄 우위" \
+  --state-status active \
+  --state-bias bearish \
+  --net-effect oil_up \
+  --supersedes-active \
+  --source "Reuters|https://www.reuters.com/world/|2026-02-18T09:45:00+09:00"
+```
+
+## taxonomy 조회 / 재색인
+
+```bash
+python3 scripts/world_memory_cli.py taxonomy --refresh --format md
+python3 scripts/world_memory_cli.py taxonomy --type story --format pretty
+python3 scripts/world_memory_cli.py taxonomy --type tag --limit 50 --format csv --out reports/world_memory_tags.csv
+python3 scripts/world_memory_cli.py taxonomy --type state_key --format pretty
+```
+
+운영 원칙:
+- 저장 전 기존 `story/tag/ticker`를 우선 재사용한다.
+- 새로운 값은 기존 규격으로 의미를 담기 어려울 때만 추가한다.
+- 동의어 중복, 일회성 라벨, 과도한 세분화는 피한다.
+
+## 상태 스냅샷 조회 / 재구성
+
+```bash
+python3 scripts/world_memory_cli.py states --status active --format md
+python3 scripts/world_memory_cli.py states --status all --state-key oil_geopolitical_risk --format pretty
+python3 scripts/world_memory_cli.py state-sync
+```
+
+- `states`: 현재/과거 상태 스냅샷 조회
+- `state-sync`: 기존 issue log에서 `story` 또는 `state_key`를 읽어 derived 상태를 재구성
+- 일반 `add`도 `story`가 있으면 derived 상태를 자동 갱신한다. `state-sync`는 백필/재구성용이다.
+- 수동 상태가 있는 `state_key`는 `state-sync`가 덮어쓰지 않는다.
+
 ## 로그 조회
 
 ```bash
@@ -274,12 +335,13 @@ python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_
 ```
 
 `report` 기본 섹션:
-1. 시장을 주도하는 스토리 (Narrative Lens)
-2. 주식/채권 주요 이슈 (미국/한국/글로벌 분리)
-3. 글로벌 정치 이슈
-4. 비지배적 관심 이슈
-5. 포트폴리오 상담 반영 체크포인트
-6. 결론
+1. 현재 유효한 상태 (State Snapshots)
+2. 시장을 주도하는 스토리 (Narrative Lens)
+3. 주식/채권 주요 이슈 (미국/한국/글로벌 분리)
+4. 글로벌 정치 이슈
+5. 비지배적 관심 이슈
+6. 포트폴리오 상담 반영 체크포인트
+7. 결론
 
 ## 의존성 메모
 - 필수: `yfinance`, `pandas`, `matplotlib`

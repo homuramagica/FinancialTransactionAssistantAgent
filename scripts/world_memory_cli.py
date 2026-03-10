@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sqlite3
 import sys
 import uuid
@@ -22,6 +23,23 @@ DEFAULT_TZ = "Asia/Seoul"
 CATEGORY_CHOICES = ["stock_bond", "geopolitics", "emerging"]
 REGION_CHOICES = ["US", "KR", "GLOBAL"]
 IMPORTANCE_CHOICES = ["high", "medium", "low"]
+STATE_STATUS_CHOICES = ["active", "watch", "resolved", "overridden"]
+STATE_BIAS_CHOICES = ["bullish", "bearish", "neutral", "mixed"]
+TAXONOMY_TYPE_CHOICES = [
+    "category",
+    "region",
+    "importance",
+    "story",
+    "tag",
+    "ticker",
+    "state_key",
+    "net_effect",
+]
+SYSTEM_TAXONOMY_VALUES: dict[str, list[str]] = {
+    "category": CATEGORY_CHOICES,
+    "region": REGION_CHOICES,
+    "importance": IMPORTANCE_CHOICES,
+}
 
 
 def _kst_now() -> dt.datetime:
@@ -91,6 +109,45 @@ def _unique_preserve_order(items: list[str]) -> list[str]:
     return out
 
 
+def _normalize_state_key(value: str) -> str:
+    token = value.strip().lower()
+    token = re.sub(r"[^\w가-힣]+", "_", token)
+    token = re.sub(r"_+", "_", token).strip("_")
+    if not token:
+        raise SystemExit("state key is empty after normalization")
+    return token
+
+
+def _normalize_state_status(value: str) -> str:
+    token = value.strip().lower()
+    mapping = {
+        "active": "active",
+        "watch": "watch",
+        "resolved": "resolved",
+        "overridden": "overridden",
+    }
+    normalized = mapping.get(token)
+    if normalized is None:
+        raise SystemExit(f"Invalid state status: {value} (allowed: {', '.join(STATE_STATUS_CHOICES)})")
+    return normalized
+
+
+def _normalize_state_bias(value: str) -> str:
+    token = value.strip().lower()
+    mapping = {
+        "bull": "bullish",
+        "bullish": "bullish",
+        "bear": "bearish",
+        "bearish": "bearish",
+        "neutral": "neutral",
+        "mixed": "mixed",
+    }
+    normalized = mapping.get(token)
+    if normalized is None:
+        raise SystemExit(f"Invalid state bias: {value} (allowed: {', '.join(STATE_BIAS_CHOICES)})")
+    return normalized
+
+
 def _read_optional_text(text: str | None, file_path: str | None) -> str:
     if text and file_path:
         raise SystemExit("Choose one of --sources-json or --sources-file")
@@ -152,7 +209,81 @@ def _init_db(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_world_issue_entries_filters "
         "ON world_issue_entries(issue_date, category, region, importance)"
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS world_issue_taxonomy (
+            taxonomy_type TEXT NOT NULL,
+            value TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            usage_count INTEGER NOT NULL DEFAULT 0,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (taxonomy_type, value)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_issue_taxonomy_type "
+        "ON world_issue_taxonomy(taxonomy_type, usage_count DESC, value)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS world_issue_states (
+            state_id TEXT PRIMARY KEY,
+            state_key TEXT NOT NULL,
+            state_label TEXT NOT NULL,
+            state_status TEXT NOT NULL,
+            state_bias TEXT NOT NULL,
+            net_effect TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            rationale TEXT NOT NULL,
+            source_event_id TEXT NOT NULL,
+            caused_by_event_id TEXT,
+            supersedes_state_id TEXT,
+            replaced_by_state_id TEXT,
+            effective_from TEXT NOT NULL,
+            effective_to TEXT,
+            confidence REAL NOT NULL,
+            source_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            FOREIGN KEY (source_event_id) REFERENCES world_issue_entries(event_id),
+            FOREIGN KEY (caused_by_event_id) REFERENCES world_issue_entries(event_id),
+            FOREIGN KEY (supersedes_state_id) REFERENCES world_issue_states(state_id),
+            FOREIGN KEY (replaced_by_state_id) REFERENCES world_issue_states(state_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_issue_states_key_status "
+        "ON world_issue_states(state_key, state_status, effective_from DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_issue_states_source_event "
+        "ON world_issue_states(source_event_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_issue_states_effective_from "
+        "ON world_issue_states(effective_from DESC)"
+    )
+    _seed_system_taxonomy(conn)
     conn.commit()
+
+
+def _seed_system_taxonomy(conn: sqlite3.Connection) -> None:
+    now = _kst_now().isoformat()
+    for taxonomy_type, values in SYSTEM_TAXONOMY_VALUES.items():
+        for value in values:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO world_issue_taxonomy (
+                    taxonomy_type, value, status, source, usage_count, first_seen_at, last_seen_at
+                ) VALUES (?, ?, 'active', 'system', 0, ?, ?)
+                """,
+                (taxonomy_type, value, now, now),
+            )
 
 
 def _ensure_db(base_dir: str, db_file: str) -> Path:
@@ -403,6 +534,11 @@ def _build_issue_payload(
     story: str,
     story_thesis: str,
     story_checkpoint: str,
+    state_key: str,
+    state_label: str,
+    state_status: str,
+    state_bias: str,
+    net_effect: str,
 ) -> dict[str, Any]:
     now = _kst_now()
     payload: dict[str, Any] = {
@@ -430,6 +566,16 @@ def _build_issue_payload(
         payload["story_thesis"] = story_thesis.strip()
     if story_checkpoint.strip():
         payload["story_checkpoint"] = story_checkpoint.strip()
+    if state_key.strip():
+        payload["state_key"] = state_key.strip()
+    if state_label.strip():
+        payload["state_label"] = state_label.strip()
+    if state_status.strip():
+        payload["state_status"] = state_status.strip()
+    if state_bias.strip():
+        payload["state_bias"] = state_bias.strip()
+    if net_effect.strip():
+        payload["net_effect"] = net_effect.strip()
     return payload
 
 
@@ -558,6 +704,11 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
         tags = []
 
     sources = _normalize_sources_for_storage(normalized.get("sources"))
+    state_key_raw = str(normalized.get("state_key", "")).strip()
+    state_label = str(normalized.get("state_label", "")).strip()
+    state_status_raw = str(normalized.get("state_status", "")).strip()
+    state_bias_raw = str(normalized.get("state_bias", "")).strip()
+    net_effect = str(normalized.get("net_effect", "")).strip()
 
     try:
         schema_version = int(normalized.get("schema_version", 1))
@@ -578,6 +729,18 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
     normalized["tickers"] = tickers
     normalized["tags"] = tags
     normalized["sources"] = sources
+    if state_key_raw:
+        normalized["state_key"] = _normalize_state_key(state_key_raw)
+    elif "state_key" in normalized:
+        normalized.pop("state_key", None)
+    if state_label:
+        normalized["state_label"] = state_label
+    if state_status_raw:
+        normalized["state_status"] = _normalize_state_status(state_status_raw)
+    if state_bias_raw:
+        normalized["state_bias"] = _normalize_state_bias(state_bias_raw)
+    if net_effect:
+        normalized["net_effect"] = net_effect
     return normalized
 
 
@@ -609,6 +772,596 @@ def _upsert_sqlite_payload(conn: sqlite3.Connection, payload: dict[str, Any]) ->
             json.dumps(payload, ensure_ascii=False),
         ),
     )
+
+
+def _taxonomy_observed_at(payload: dict[str, Any]) -> str:
+    observed_at = _parse_datetime_safe(payload.get("as_of")) or _parse_datetime_safe(payload.get("logged_at"))
+    if observed_at is None:
+        observed_at = _kst_now()
+    return observed_at.isoformat()
+
+
+def _taxonomy_entries_from_payload(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
+    entries: list[tuple[str, str, str]] = []
+
+    category = str(payload.get("category", "")).strip()
+    region = str(payload.get("region", "")).strip()
+    importance = str(payload.get("importance", "")).strip()
+    story = str(payload.get("story", "")).strip()
+    state_key = str(payload.get("state_key", "")).strip()
+    net_effect = str(payload.get("net_effect", "")).strip()
+
+    if category:
+        entries.append(("category", category, "system"))
+    if region:
+        entries.append(("region", region, "system"))
+    if importance:
+        entries.append(("importance", importance, "system"))
+    if story:
+        entries.append(("story", story, "observed"))
+    if state_key:
+        entries.append(("state_key", state_key, "observed"))
+    if net_effect:
+        entries.append(("net_effect", net_effect, "observed"))
+
+    for tag in [str(item).strip() for item in payload.get("tags", []) if str(item).strip()]:
+        entries.append(("tag", tag, "observed"))
+
+    for ticker in [str(item).strip().upper() for item in payload.get("tickers", []) if str(item).strip()]:
+        entries.append(("ticker", ticker, "observed"))
+
+    deduped: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for taxonomy_type, value, source in entries:
+        key = (taxonomy_type, value)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((taxonomy_type, value, source))
+    return deduped
+
+
+def _upsert_taxonomy_observation(
+    conn: sqlite3.Connection,
+    *,
+    taxonomy_type: str,
+    value: str,
+    observed_at: str,
+    source: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO world_issue_taxonomy (
+            taxonomy_type, value, status, source, usage_count, first_seen_at, last_seen_at
+        ) VALUES (?, ?, 'active', ?, 1, ?, ?)
+        ON CONFLICT(taxonomy_type, value) DO UPDATE SET
+            status='active',
+            usage_count=world_issue_taxonomy.usage_count + 1,
+            first_seen_at=MIN(world_issue_taxonomy.first_seen_at, excluded.first_seen_at),
+            last_seen_at=MAX(world_issue_taxonomy.last_seen_at, excluded.last_seen_at)
+        """,
+        (taxonomy_type, value, source, observed_at, observed_at),
+    )
+
+
+def _upsert_taxonomy_for_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    observed_at = _taxonomy_observed_at(payload)
+    for taxonomy_type, value, source in _taxonomy_entries_from_payload(payload):
+        _upsert_taxonomy_observation(
+            conn,
+            taxonomy_type=taxonomy_type,
+            value=value,
+            observed_at=observed_at,
+            source=source,
+        )
+
+
+def _upsert_taxonomy_for_state(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    observed_at = str(row.get("effective_from", "")).strip() or _kst_now().isoformat()
+    state_key = str(row.get("state_key", "")).strip()
+    net_effect = str(row.get("net_effect", "")).strip()
+    if state_key:
+        _upsert_taxonomy_observation(
+            conn,
+            taxonomy_type="state_key",
+            value=state_key,
+            observed_at=observed_at,
+            source="observed",
+        )
+    if net_effect:
+        _upsert_taxonomy_observation(
+            conn,
+            taxonomy_type="net_effect",
+            value=net_effect,
+            observed_at=observed_at,
+            source="observed",
+        )
+
+
+def _rebuild_taxonomy_index(conn: sqlite3.Connection) -> int:
+    conn.execute("DELETE FROM world_issue_taxonomy")
+    _seed_system_taxonomy(conn)
+
+    processed = 0
+    rows = conn.execute("SELECT payload_json FROM world_issue_entries ORDER BY as_of ASC, logged_at ASC")
+    for record in rows:
+        try:
+            payload = json.loads(str(record["payload_json"]))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        try:
+            normalized = _normalize_payload_for_storage(payload)
+        except ValueError:
+            continue
+        _upsert_taxonomy_for_payload(conn, normalized)
+        processed += 1
+
+    state_rows = conn.execute(
+        "SELECT state_key, net_effect, effective_from FROM world_issue_states"
+    ).fetchall()
+    for row in state_rows:
+        _upsert_taxonomy_for_state(conn, dict(row))
+    return processed
+
+
+def _read_taxonomy_rows(
+    *,
+    db_path: Path,
+    taxonomy_type: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+
+    where = ""
+    params: list[Any] = []
+    if taxonomy_type != "all":
+        where = "WHERE taxonomy_type = ?"
+        params.append(taxonomy_type)
+    params.append(max(1, limit))
+
+    query = (
+        "SELECT taxonomy_type, value, status, source, usage_count, first_seen_at, last_seen_at "
+        "FROM world_issue_taxonomy "
+        f"{where} "
+        "ORDER BY usage_count DESC, last_seen_at DESC, value ASC "
+        "LIMIT ?"
+    )
+
+    out: list[dict[str, Any]] = []
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        for row in conn.execute(query, params):
+            out.append(dict(row))
+    return out
+
+
+def _taxonomy_type_label(value: str) -> str:
+    labels = {
+        "category": "분류",
+        "region": "지역",
+        "importance": "중요도",
+        "story": "스토리",
+        "tag": "태그",
+        "ticker": "티커",
+        "state_key": "상태 키",
+        "net_effect": "순효과",
+    }
+    return labels.get(value, value)
+
+
+def _taxonomy_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    view_rows: list[dict[str, Any]] = []
+    for row in rows:
+        first_seen = _parse_datetime_safe(row.get("first_seen_at"))
+        last_seen = _parse_datetime_safe(row.get("last_seen_at"))
+        view_rows.append(
+            {
+                "Type": _taxonomy_type_label(str(row.get("taxonomy_type", ""))),
+                "Value": str(row.get("value", "")),
+                "Source": str(row.get("source", "")),
+                "Status": str(row.get("status", "")),
+                "Usage Count": int(row.get("usage_count", 0)),
+                "First Seen (KST)": first_seen.strftime("%Y-%m-%d %H:%M KST") if first_seen else "",
+                "Last Seen (KST)": last_seen.strftime("%Y-%m-%d %H:%M KST") if last_seen else "",
+            }
+        )
+    return pd.DataFrame(view_rows)
+
+
+def _label_state_status(value: str) -> str:
+    return {
+        "active": "활성",
+        "watch": "관찰",
+        "resolved": "해소",
+        "overridden": "대체됨",
+    }.get(value, value)
+
+
+def _label_state_bias(value: str) -> str:
+    return {
+        "bullish": "상방",
+        "bearish": "하방",
+        "neutral": "중립",
+        "mixed": "혼합",
+    }.get(value, value)
+
+
+def _build_state_payload(
+    *,
+    state_key: str,
+    state_label: str,
+    state_status: str,
+    state_bias: str,
+    net_effect: str,
+    summary: str,
+    rationale: str,
+    source_event_id: str,
+    caused_by_event_id: str,
+    supersedes_state_id: str,
+    effective_from: str,
+    effective_to: str,
+    confidence: float,
+    source_kind: str,
+) -> dict[str, Any]:
+    now = _kst_now().isoformat()
+    payload = {
+        "state_id": str(uuid.uuid4()),
+        "state_key": _normalize_state_key(state_key),
+        "state_label": state_label.strip() or state_key.strip(),
+        "state_status": _normalize_state_status(state_status),
+        "state_bias": _normalize_state_bias(state_bias),
+        "net_effect": net_effect.strip(),
+        "summary": summary.strip(),
+        "rationale": rationale.strip(),
+        "source_event_id": source_event_id.strip(),
+        "caused_by_event_id": caused_by_event_id.strip(),
+        "supersedes_state_id": supersedes_state_id.strip(),
+        "effective_from": _parse_datetime(effective_from).isoformat(),
+        "effective_to": _parse_datetime(effective_to).isoformat() if effective_to.strip() else "",
+        "confidence": max(0.0, min(1.0, float(confidence))),
+        "source_kind": source_kind.strip() or "manual",
+        "created_at": now,
+        "updated_at": now,
+    }
+    if not payload["summary"]:
+        raise SystemExit("state summary is required")
+    if not payload["source_event_id"]:
+        raise SystemExit("state source_event_id is required")
+    return payload
+
+
+def _insert_sqlite_state(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO world_issue_states (
+            state_id, state_key, state_label, state_status, state_bias, net_effect,
+            summary, rationale, source_event_id, caused_by_event_id, supersedes_state_id,
+            replaced_by_state_id, effective_from, effective_to, confidence, source_kind,
+            created_at, updated_at, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(payload.get("state_id", "")),
+            str(payload.get("state_key", "")),
+            str(payload.get("state_label", "")),
+            str(payload.get("state_status", "")),
+            str(payload.get("state_bias", "")),
+            str(payload.get("net_effect", "")),
+            str(payload.get("summary", "")),
+            str(payload.get("rationale", "")),
+            str(payload.get("source_event_id", "")),
+            str(payload.get("caused_by_event_id", "")) or None,
+            str(payload.get("supersedes_state_id", "")) or None,
+            str(payload.get("replaced_by_state_id", "")) or None,
+            str(payload.get("effective_from", "")),
+            str(payload.get("effective_to", "")) or None,
+            float(payload.get("confidence", 0.0)),
+            str(payload.get("source_kind", "manual")),
+            str(payload.get("created_at", "")),
+            str(payload.get("updated_at", "")),
+            json.dumps(payload, ensure_ascii=False),
+        ),
+    )
+
+
+def _refresh_state_row(conn: sqlite3.Connection, state_id: str) -> None:
+    row = conn.execute("SELECT * FROM world_issue_states WHERE state_id = ?", (state_id,)).fetchone()
+    if row is None:
+        return
+    payload = {
+        "state_id": row["state_id"],
+        "state_key": row["state_key"],
+        "state_label": row["state_label"],
+        "state_status": row["state_status"],
+        "state_bias": row["state_bias"],
+        "net_effect": row["net_effect"],
+        "summary": row["summary"],
+        "rationale": row["rationale"],
+        "source_event_id": row["source_event_id"],
+        "caused_by_event_id": row["caused_by_event_id"] or "",
+        "supersedes_state_id": row["supersedes_state_id"] or "",
+        "replaced_by_state_id": row["replaced_by_state_id"] or "",
+        "effective_from": row["effective_from"],
+        "effective_to": row["effective_to"] or "",
+        "confidence": row["confidence"],
+        "source_kind": row["source_kind"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+    conn.execute(
+        "UPDATE world_issue_states SET payload_json = ? WHERE state_id = ?",
+        (json.dumps(payload, ensure_ascii=False), state_id),
+    )
+
+
+def _find_latest_state(
+    conn: sqlite3.Connection,
+    *,
+    state_key: str,
+    statuses: tuple[str, ...] = ("active", "watch"),
+) -> sqlite3.Row | None:
+    placeholders = ", ".join(["?"] * len(statuses))
+    query = (
+        "SELECT * FROM world_issue_states "
+        f"WHERE state_key = ? AND state_status IN ({placeholders}) "
+        "ORDER BY effective_from DESC, created_at DESC LIMIT 1"
+    )
+    params: list[Any] = [_normalize_state_key(state_key), *statuses]
+    return conn.execute(query, params).fetchone()
+
+
+def _mark_state_replaced(
+    conn: sqlite3.Connection,
+    *,
+    state_id: str,
+    replaced_by_state_id: str,
+    effective_to: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE world_issue_states
+        SET state_status = 'overridden',
+            replaced_by_state_id = ?,
+            effective_to = ?,
+            updated_at = ?
+        WHERE state_id = ?
+        """,
+        (replaced_by_state_id, effective_to, _kst_now().isoformat(), state_id),
+    )
+    _refresh_state_row(conn, state_id)
+
+
+def _state_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    view_rows: list[dict[str, Any]] = []
+    for row in rows:
+        effective_from = _parse_datetime_safe(row.get("effective_from"))
+        effective_to = _parse_datetime_safe(row.get("effective_to"))
+        view_rows.append(
+            {
+                "Status": _label_state_status(str(row.get("state_status", ""))),
+                "Bias": _label_state_bias(str(row.get("state_bias", ""))),
+                "State Key": str(row.get("state_key", "")),
+                "Label": str(row.get("state_label", "")),
+                "Net Effect": str(row.get("net_effect", "")),
+                "Summary": str(row.get("summary", "")),
+                "Effective From (KST)": effective_from.strftime("%Y-%m-%d %H:%M KST") if effective_from else "",
+                "Effective To (KST)": effective_to.strftime("%Y-%m-%d %H:%M KST") if effective_to else "",
+                "Confidence": round(float(row.get("confidence", 0.0)), 2),
+                "Source Event": str(row.get("source_event_id", "")),
+                "Source Kind": str(row.get("source_kind", "")),
+            }
+        )
+    return pd.DataFrame(view_rows)
+
+
+def _read_state_rows(
+    *,
+    db_path: Path,
+    state_status: str,
+    state_key: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+
+    where: list[str] = []
+    params: list[Any] = []
+    if state_status != "all":
+        where.append("state_status = ?")
+        params.append(_normalize_state_status(state_status))
+    if state_key:
+        where.append("state_key = ?")
+        params.append(_normalize_state_key(state_key))
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    params.append(max(1, limit))
+
+    query = (
+        "SELECT state_id, state_key, state_label, state_status, state_bias, net_effect, "
+        "summary, rationale, source_event_id, caused_by_event_id, supersedes_state_id, "
+        "replaced_by_state_id, effective_from, effective_to, confidence, source_kind, created_at, updated_at "
+        "FROM world_issue_states "
+        f"{where_sql} "
+        "ORDER BY effective_from DESC, created_at DESC LIMIT ?"
+    )
+
+    out: list[dict[str, Any]] = []
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        for row in conn.execute(query, params):
+            out.append(dict(row))
+    return out
+
+
+def _read_current_state_rows(
+    *,
+    db_path: Path,
+    limit: int,
+    statuses: tuple[str, ...] = ("active", "watch"),
+) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+
+    normalized_statuses = tuple(_normalize_state_status(status) for status in statuses)
+    placeholders = ", ".join(["?"] * len(normalized_statuses))
+    query = (
+        "SELECT state_id, state_key, state_label, state_status, state_bias, net_effect, "
+        "summary, rationale, source_event_id, caused_by_event_id, supersedes_state_id, "
+        "replaced_by_state_id, effective_from, effective_to, confidence, source_kind, created_at, updated_at "
+        "FROM world_issue_states "
+        f"WHERE state_status IN ({placeholders}) "
+        "ORDER BY effective_from DESC, created_at DESC LIMIT ?"
+    )
+    params: list[Any] = [*normalized_statuses, max(1, limit)]
+
+    out: list[dict[str, Any]] = []
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        for row in conn.execute(query, params):
+            out.append(dict(row))
+    return out
+
+
+def _state_key_from_issue(payload: dict[str, Any]) -> str:
+    explicit = str(payload.get("state_key", "")).strip()
+    if explicit:
+        return _normalize_state_key(explicit)
+
+    story = str(payload.get("story", "")).strip()
+    if story:
+        return _normalize_state_key(story)
+    return ""
+
+
+def _build_derived_state_payload_from_issue(payload: dict[str, Any]) -> dict[str, Any] | None:
+    state_key = _state_key_from_issue(payload)
+    if not state_key:
+        return None
+
+    label = (
+        str(payload.get("state_label", "")).strip()
+        or str(payload.get("story", "")).strip()
+        or str(payload.get("title", "")).strip()
+    )
+    summary = str(payload.get("summary", "")).strip()
+    rationale = str(payload.get("story_thesis", "")).strip() or str(payload.get("why_it_matters", "")).strip()
+    net_effect = str(payload.get("net_effect", "")).strip()
+    bias = str(payload.get("state_bias", "")).strip() or "mixed"
+    status = str(payload.get("state_status", "")).strip() or "active"
+    effective_from = str(payload.get("as_of", "")).strip() or _kst_now().isoformat()
+
+    return _build_state_payload(
+        state_key=state_key,
+        state_label=label,
+        state_status=status,
+        state_bias=bias,
+        net_effect=net_effect,
+        summary=summary,
+        rationale=rationale,
+        source_event_id=str(payload.get("event_id", "")).strip(),
+        caused_by_event_id=str(payload.get("event_id", "")).strip(),
+        supersedes_state_id="",
+        effective_from=effective_from,
+        effective_to="",
+        confidence=0.55,
+        source_kind="derived",
+    )
+
+
+def _upsert_derived_state_for_issue(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    state_payload = _build_derived_state_payload_from_issue(payload)
+    if state_payload is None:
+        return None
+
+    state_key = str(state_payload.get("state_key", "")).strip()
+    manual_exists = conn.execute(
+        """
+        SELECT 1
+        FROM world_issue_states
+        WHERE state_key = ? AND source_kind != 'derived'
+        LIMIT 1
+        """,
+        (state_key,),
+    ).fetchone()
+    if manual_exists is not None:
+        return None
+
+    previous = conn.execute(
+        """
+        SELECT *
+        FROM world_issue_states
+        WHERE state_key = ? AND source_kind = 'derived' AND state_status IN ('active', 'watch')
+        ORDER BY effective_from DESC, created_at DESC
+        LIMIT 1
+        """,
+        (state_key,),
+    ).fetchone()
+    if previous is not None:
+        state_payload["supersedes_state_id"] = str(previous["state_id"])
+
+    _insert_sqlite_state(conn, state_payload)
+    if previous is not None:
+        _mark_state_replaced(
+            conn,
+            state_id=str(previous["state_id"]),
+            replaced_by_state_id=str(state_payload.get("state_id", "")),
+            effective_to=str(state_payload.get("effective_from", "")),
+        )
+    _upsert_taxonomy_for_state(conn, state_payload)
+    return state_payload
+
+
+def _sync_derived_states(conn: sqlite3.Connection, *, replace_existing: bool) -> tuple[int, int]:
+    if replace_existing:
+        conn.execute("DELETE FROM world_issue_states WHERE source_kind = 'derived'")
+
+    rows = conn.execute("SELECT payload_json FROM world_issue_entries ORDER BY as_of ASC, logged_at ASC").fetchall()
+    latest_by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        try:
+            normalized = _normalize_payload_for_storage(payload)
+        except ValueError:
+            continue
+        state_key = _state_key_from_issue(normalized)
+        if not state_key:
+            continue
+        latest_by_key[state_key] = normalized
+
+    inserted = 0
+    skipped_manual = 0
+    for state_key, payload in latest_by_key.items():
+        manual_exists = conn.execute(
+            """
+            SELECT 1
+            FROM world_issue_states
+            WHERE state_key = ? AND source_kind != 'derived'
+            LIMIT 1
+            """,
+            (state_key,),
+        ).fetchone()
+        if manual_exists is not None:
+            skipped_manual += 1
+            continue
+
+        state_payload = _build_derived_state_payload_from_issue(payload)
+        if state_payload is None:
+            continue
+        _insert_sqlite_state(conn, state_payload)
+        _upsert_taxonomy_for_state(conn, state_payload)
+        inserted += 1
+
+    return inserted, skipped_manual
 
 
 def _count_sqlite_rows(db_path: Path) -> int:
@@ -716,6 +1469,7 @@ def _migrate_jsonl_to_sqlite(log_path: Path, db_path: Path) -> tuple[int, int, i
                 continue
             _upsert_sqlite_payload(conn, payload)
             migrated += 1
+        _rebuild_taxonomy_index(conn)
         conn.commit()
 
     total_after = _count_sqlite_rows(db_path)
@@ -848,6 +1602,27 @@ def _table_for_report(rows: list[dict[str, Any]], *, max_items: int) -> str:
 
     df = pd.DataFrame(view_rows)
     return _dataframe_to_markdown(df)
+
+
+def _state_table_for_report(rows: list[dict[str, Any]], *, max_items: int) -> str:
+    if not rows:
+        return "현재 활성 상태가 없습니다.\n"
+
+    view_rows: list[dict[str, Any]] = []
+    for row in rows[: max_items]:
+        effective_from = _parse_datetime_safe(row.get("effective_from"))
+        view_rows.append(
+            {
+                "시작(KST)": effective_from.strftime("%Y-%m-%d %H:%M KST") if effective_from else "",
+                "상태": _label_state_status(str(row.get("state_status", ""))),
+                "방향": _label_state_bias(str(row.get("state_bias", ""))),
+                "state_key": str(row.get("state_key", "")),
+                "라벨": str(row.get("state_label", "")),
+                "요약": str(row.get("summary", "")),
+                "net_effect": str(row.get("net_effect", "")),
+            }
+        )
+    return _dataframe_to_markdown(pd.DataFrame(view_rows))
 
 
 def _humanize_story_tag(tag: str) -> str:
@@ -1022,6 +1797,7 @@ def _handle_init(args: argparse.Namespace) -> int:
     db_path = _ensure_db(args.base_dir, args.db_file)
     print(f"Initialized JSONL mirror: {log_path}")
     print(f"Initialized SQLite store: {db_path}")
+    print("Initialized taxonomy index: world_issue_taxonomy")
     return 0
 
 
@@ -1031,6 +1807,24 @@ def _handle_add(args: argparse.Namespace) -> int:
     sources = _parse_sources(args)
     if not sources:
         raise SystemExit("At least one source is required. Use --source or --sources-json/--sources-file")
+
+    state_args_present = any(
+        [
+            str(args.state_label or "").strip(),
+            str(args.state_status or "").strip(),
+            str(args.state_bias or "").strip(),
+            str(args.net_effect or "").strip(),
+            str(args.state_summary or "").strip(),
+            str(args.state_rationale or "").strip(),
+            str(args.supersedes_state_id or "").strip(),
+            str(args.caused_by_event_id or "").strip(),
+            bool(args.supersedes_active),
+            getattr(args, "state_effective_from", None) is not None,
+            getattr(args, "state_effective_to", None) is not None,
+        ]
+    )
+    if state_args_present and not str(args.state_key or "").strip():
+        raise SystemExit("State metadata requires --state-key")
 
     as_of = args.as_of or _kst_now()
     payload = _build_issue_payload(
@@ -1049,6 +1843,11 @@ def _handle_add(args: argparse.Namespace) -> int:
         story=(args.story or "").strip(),
         story_thesis=(args.story_thesis or "").strip(),
         story_checkpoint=(args.story_checkpoint or "").strip(),
+        state_key=(args.state_key or "").strip(),
+        state_label=(args.state_label or "").strip(),
+        state_status=(args.state_status or "").strip(),
+        state_bias=(args.state_bias or "").strip(),
+        net_effect=(args.net_effect or "").strip(),
     )
 
     if args.dry_run:
@@ -1059,6 +1858,58 @@ def _handle_add(args: argparse.Namespace) -> int:
     with _connect_db(db_path) as conn:
         _init_db(conn)
         _upsert_sqlite_payload(conn, normalized_payload)
+        state_payload: dict[str, Any] | None = None
+        state_key = str(normalized_payload.get("state_key", "")).strip()
+        if state_key:
+            supersedes_state_id = str(args.supersedes_state_id or "").strip()
+            if args.supersedes_active and not supersedes_state_id:
+                previous = _find_latest_state(conn, state_key=state_key)
+                if previous is not None:
+                    supersedes_state_id = str(previous["state_id"])
+
+            effective_from = (
+                args.state_effective_from.isoformat()
+                if getattr(args, "state_effective_from", None) is not None
+                else str(normalized_payload.get("as_of", ""))
+            )
+            effective_to = (
+                args.state_effective_to.isoformat()
+                if getattr(args, "state_effective_to", None) is not None
+                else ""
+            )
+
+            state_payload = _build_state_payload(
+                state_key=state_key,
+                state_label=str(normalized_payload.get("state_label", "")).strip()
+                or str(normalized_payload.get("story", "")).strip()
+                or str(normalized_payload.get("title", "")).strip(),
+                state_status=str(normalized_payload.get("state_status", "")).strip() or "active",
+                state_bias=str(normalized_payload.get("state_bias", "")).strip() or "mixed",
+                net_effect=str(normalized_payload.get("net_effect", "")).strip(),
+                summary=(args.state_summary or "").strip() or str(normalized_payload.get("summary", "")).strip(),
+                rationale=(args.state_rationale or "").strip()
+                or str(normalized_payload.get("story_thesis", "")).strip()
+                or str(normalized_payload.get("why_it_matters", "")).strip(),
+                source_event_id=str(normalized_payload.get("event_id", "")).strip(),
+                caused_by_event_id=(args.caused_by_event_id or "").strip() or str(normalized_payload.get("event_id", "")).strip(),
+                supersedes_state_id=supersedes_state_id,
+                effective_from=effective_from,
+                effective_to=effective_to,
+                confidence=float(args.state_confidence),
+                source_kind="issue_add",
+            )
+            _insert_sqlite_state(conn, state_payload)
+            if supersedes_state_id:
+                _mark_state_replaced(
+                    conn,
+                    state_id=supersedes_state_id,
+                    replaced_by_state_id=str(state_payload.get("state_id", "")),
+                    effective_to=str(state_payload.get("effective_from", "")),
+                )
+            _upsert_taxonomy_for_state(conn, state_payload)
+        else:
+            state_payload = _upsert_derived_state_for_issue(conn, normalized_payload)
+        _upsert_taxonomy_for_payload(conn, normalized_payload)
         conn.commit()
 
     if not args.no_jsonl_mirror:
@@ -1067,6 +1918,9 @@ def _handle_add(args: argparse.Namespace) -> int:
 
     print(f"Upserted SQLite world issue: {db_path}")
     print(f"event_id={normalized_payload['event_id']}")
+    if state_payload is not None:
+        print(f"state_id={state_payload['state_id']}")
+        print(f"state_key={state_payload['state_key']}")
     return 0
 
 
@@ -1090,6 +1944,71 @@ def _handle_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_taxonomy(args: argparse.Namespace) -> int:
+    db_path = _ensure_db(args.base_dir, args.db_file)
+
+    if args.refresh:
+        with _connect_db(db_path) as conn:
+            _init_db(conn)
+            processed = _rebuild_taxonomy_index(conn)
+            conn.commit()
+        print(f"Refreshed taxonomy index from {processed} world issue rows")
+
+    rows = _read_taxonomy_rows(
+        db_path=db_path,
+        taxonomy_type=args.type,
+        limit=args.limit,
+    )
+
+    if args.format == "json":
+        payload = {
+            "db_path": str(db_path),
+            "count": len(rows),
+            "rows": rows,
+        }
+        _emit_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", args.out)
+        return 0
+
+    df = _taxonomy_rows_to_frame(rows)
+    _emit_dataframe(df, args.format, args.out)
+    return 0
+
+
+def _handle_states(args: argparse.Namespace) -> int:
+    db_path = _ensure_db(args.base_dir, args.db_file)
+    rows = _read_state_rows(
+        db_path=db_path,
+        state_status=args.status,
+        state_key=args.state_key,
+        limit=args.limit,
+    )
+
+    if args.format == "json":
+        payload = {
+            "db_path": str(db_path),
+            "count": len(rows),
+            "rows": rows,
+        }
+        _emit_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", args.out)
+        return 0
+
+    df = _state_rows_to_frame(rows)
+    _emit_dataframe(df, args.format, args.out)
+    return 0
+
+
+def _handle_state_sync(args: argparse.Namespace) -> int:
+    db_path = _ensure_db(args.base_dir, args.db_file)
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        inserted, skipped_manual = _sync_derived_states(conn, replace_existing=not args.keep_derived)
+        _rebuild_taxonomy_index(conn)
+        conn.commit()
+    print(f"Synced derived states: inserted={inserted} skipped_manual={skipped_manual}")
+    print(f"SQLite store: {db_path}")
+    return 0
+
+
 def _pick_non_dominant_rows(rows: list[dict[str, Any]], *, max_items: int) -> list[dict[str, Any]]:
     emerging_rows = [r for r in rows if str(r.get("category", "")) == "emerging"]
     if emerging_rows:
@@ -1102,6 +2021,7 @@ def _pick_non_dominant_rows(rows: list[dict[str, Any]], *, max_items: int) -> li
 def _build_report_text(
     rows: list[dict[str, Any]],
     *,
+    state_rows: list[dict[str, Any]],
     start_date: dt.date,
     end_date: dt.date,
     max_items: int,
@@ -1132,7 +2052,11 @@ def _build_report_text(
     lines.append(f"- 원본 로그: `{log_path}`")
     lines.append("")
 
-    lines.append("## 0) 시장을 주도하는 스토리 (Narrative Lens)")
+    lines.append("## 0) 현재 유효한 상태 (State Snapshots)")
+    lines.append(_state_table_for_report(state_rows, max_items=min(6, max_items)).rstrip())
+    lines.append("")
+
+    lines.append("## 1) 시장을 주도하는 스토리 (Narrative Lens)")
     lines.append(
         _story_table_for_report(
             rows,
@@ -1143,7 +2067,7 @@ def _build_report_text(
     )
     lines.append("")
 
-    lines.append("## 1) 주식/채권시장의 현재 주요 이슈")
+    lines.append("## 2) 주식/채권시장의 현재 주요 이슈")
     lines.append("### 미국")
     lines.append(_table_for_report(us_rows, max_items=max_items).rstrip())
     lines.append("")
@@ -1154,15 +2078,15 @@ def _build_report_text(
     lines.append(_table_for_report(gl_rows, max_items=max_items).rstrip())
     lines.append("")
 
-    lines.append("## 2) 투자에 영향을 미치는 글로벌 정치 이슈")
+    lines.append("## 3) 투자에 영향을 미치는 글로벌 정치 이슈")
     lines.append(_table_for_report(geo_rows, max_items=max_items).rstrip())
     lines.append("")
 
-    lines.append("## 3) 비지배적이지만 관심 둘 만한 이슈")
+    lines.append("## 4) 비지배적이지만 관심 둘 만한 이슈")
     lines.append(_table_for_report(non_dominant_rows, max_items=max_items).rstrip())
     lines.append("")
 
-    lines.append("## 4) 포트폴리오 상담 반영 체크포인트")
+    lines.append("## 5) 포트폴리오 상담 반영 체크포인트")
     for idx, hook in enumerate(hooks, start=1):
         lines.append(f"{idx}. {hook}")
     lines.append("")
@@ -1180,9 +2104,14 @@ def _build_report_text(
 def _handle_report(args: argparse.Namespace) -> int:
     filtered, backend, log_path, db_path, start_date, end_date = _load_filtered_rows(args)
     source_path = db_path if backend == "sqlite" else log_path
+    state_rows = _read_current_state_rows(
+        db_path=db_path,
+        limit=max(1, args.max_items),
+    )
 
     report_text = _build_report_text(
         filtered,
+        state_rows=state_rows,
         start_date=start_date,
         end_date=end_date,
         max_items=max(1, args.max_items),
@@ -1228,6 +2157,48 @@ def _build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--story", default="", help="시장 스토리 라벨 (예: 디스인플레이션+성장 둔화)")
     p_add.add_argument("--story-thesis", default="", help="스토리 핵심 테제 1문장")
     p_add.add_argument("--story-checkpoint", default="", help="스토리 체크포인트(무효화/확인 조건)")
+    p_add.add_argument("--state-key", default="", help="상태 스냅샷 키 (예: oil_geopolitical_risk)")
+    p_add.add_argument("--state-label", default="", help="상태 스냅샷 라벨")
+    p_add.add_argument(
+        "--state-status",
+        choices=STATE_STATUS_CHOICES,
+        default="",
+        help="상태 스냅샷 상태",
+    )
+    p_add.add_argument(
+        "--state-bias",
+        choices=STATE_BIAS_CHOICES,
+        default="",
+        help="상태 방향성",
+    )
+    p_add.add_argument("--net-effect", default="", help="자산/변수에 대한 순효과 (예: oil_up, usd_down)")
+    p_add.add_argument("--state-summary", default="", help="현재 상태 요약")
+    p_add.add_argument("--state-rationale", default="", help="현재 상태 판단 근거")
+    p_add.add_argument(
+        "--state-confidence",
+        type=float,
+        default=0.7,
+        help="상태 스냅샷 신뢰도 (0~1, 기본 0.7)",
+    )
+    p_add.add_argument(
+        "--state-effective-from",
+        type=_parse_datetime,
+        default=None,
+        help="상태 유효 시작 시각 (기본: --as-of)",
+    )
+    p_add.add_argument(
+        "--state-effective-to",
+        type=_parse_datetime,
+        default=None,
+        help="상태 유효 종료 시각",
+    )
+    p_add.add_argument(
+        "--supersedes-active",
+        action="store_true",
+        help="같은 state_key의 최신 active/watch 상태를 자동 대체",
+    )
+    p_add.add_argument("--supersedes-state-id", default="", help="명시적으로 대체할 이전 state_id")
+    p_add.add_argument("--caused-by-event-id", default="", help="직접 원인으로 연결할 event_id")
     p_add.add_argument(
         "--source",
         action="append",
@@ -1262,6 +2233,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--title", default=None, help="보고서 제목")
     p_report.add_argument("--out", default=None, help="출력 파일 경로")
 
+    p_taxonomy = sub.add_parser("taxonomy", help="기존 분류/스토리/태그/티커 사용 현황 조회")
+    p_taxonomy.add_argument(
+        "--type",
+        choices=["all"] + TAXONOMY_TYPE_CHOICES,
+        default="all",
+        help="taxonomy 유형 필터",
+    )
+    p_taxonomy.add_argument("--limit", type=int, default=200, help="표시 건수")
+    p_taxonomy.add_argument("--format", choices=["md", "csv", "json", "pretty"], default="md", help="출력 포맷")
+    p_taxonomy.add_argument("--out", default=None, help="출력 파일 경로")
+    p_taxonomy.add_argument(
+        "--refresh",
+        action="store_true",
+        help="SQLite 저장소를 기준으로 taxonomy 사용 횟수와 시각을 재계산",
+    )
+
+    p_states = sub.add_parser("states", help="현재/과거 상태 스냅샷 조회")
+    p_states.add_argument(
+        "--status",
+        choices=["all"] + STATE_STATUS_CHOICES,
+        default="active",
+        help="상태 필터",
+    )
+    p_states.add_argument("--state-key", default="", help="특정 state_key만 조회")
+    p_states.add_argument("--limit", type=int, default=50, help="표시 건수")
+    p_states.add_argument("--format", choices=["md", "csv", "json", "pretty"], default="md", help="출력 포맷")
+    p_states.add_argument("--out", default=None, help="출력 파일 경로")
+
+    p_state_sync = sub.add_parser("state-sync", help="기존 이슈 로그에서 파생 상태 스냅샷 재구성")
+    p_state_sync.add_argument(
+        "--keep-derived",
+        action="store_true",
+        help="기존 derived 상태를 삭제하지 않고 추가만 수행",
+    )
+
     p_migrate = sub.add_parser("migrate", help="기존 JSONL 로그를 SQLite로 이관")
     p_migrate.add_argument("--from-jsonl", default=None, help="마이그레이션할 JSONL 경로 (기본: base-dir/world_issue_log.jsonl)")
 
@@ -1280,6 +2286,12 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_list(args)
     if args.cmd == "report":
         return _handle_report(args)
+    if args.cmd == "taxonomy":
+        return _handle_taxonomy(args)
+    if args.cmd == "states":
+        return _handle_states(args)
+    if args.cmd == "state-sync":
+        return _handle_state_sync(args)
     if args.cmd == "migrate":
         return _handle_migrate(args)
 

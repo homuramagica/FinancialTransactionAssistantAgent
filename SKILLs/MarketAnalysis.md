@@ -34,6 +34,8 @@
 
 ### 3.1 기본(항상 우선)
 - **yfinance**: 시장 데이터의 기본 소스 (`reference/yfinance_reference.md` 참고)
+- **world_issue_log**: 관련성이 있을 때 최근 21~30일 로그를 먼저 읽어 현재 진행 중인 중기 내러티브를 파악한다.
+  - 단, 월드 메모리와 직접 관련이 낮거나 데이터가 충분치 않으면 별도 섹션을 강제하지 않고 내부 참고용으로만 사용한다.
 - **최신 뉴스/속보**: AGENTS.md의 뉴스 출처들을 사용한다.
 - **크립토 변동성 텀스트럭처(BVIV/BVIV60D)**: Volmex API(`https://rest-v1.volmex.finance/v2/history`)를 사용한다.
 

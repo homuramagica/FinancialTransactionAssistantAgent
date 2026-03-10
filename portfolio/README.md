@@ -44,15 +44,20 @@ JSONL은 한 줄이 하나의 JSON 레코드입니다.
 - 운영 방식:
   - 기본 조회/리포트 소스: `world_issue_log.sqlite3`
   - 호환용 append 미러: `world_issue_log.jsonl`
+  - 기본 철학: raw article 전문 저장보다 `summary + why_it_matters + portfolio_link + story/thesis/checkpoint + sources` 중심의 **summary-first memory**
+  - 2.5 계층: append-only issue log 위에 `world_issue_states` 상태 스냅샷 레이어를 추가해 현재 active/watch 상태를 따로 읽는다.
 
 - 분류:
   - `category`: `stock_bond`(주식/채권), `geopolitics`(정치/지정학), `emerging`(비지배 관심 이슈)
   - `region`: `US`, `KR`, `GLOBAL`
   - `importance`: `high`, `medium`, `low`
+  - `story`, `tags`, `tickers`는 기존 값을 우선 재사용하고, 기존 규격으로 담기 어려운 경우에만 새 값을 최소 단위로 추가
+  - `state_key`, `net_effect`도 기존 값을 우선 재사용하고, 꼭 필요한 경우에만 새 값을 추가
 - 시간:
   - `as_of`, `logged_at` 모두 KST 기준 ISO 8601
 - 출처:
   - `sources[]`에 매체명/URL/게시시각을 보존
+  - raw article 전문은 접근 가능한 경우에만 선택적으로 보조 저장하며, 기본 필수값은 아님
 
 기록 예시:
 
@@ -97,9 +102,25 @@ python3 scripts/world_memory_cli.py add \
   --category stock_bond --region US --importance high \
   --title "US Treasury yield volatility persists" \
   --summary "장기 금리 변동성이 성장주 밸류에이션과 회사채 스프레드에 압박을 준다." \
+  --story "고금리 장기화 vs 성장주 멀티플 부담" \
+  --story-thesis "금리 변동성이 길어질수록 장기 듀레이션 자산의 밸류 부담이 커질 수 있다." \
+  --story-checkpoint "10년물 금리의 추가 급등 여부와 연준 커뮤니케이션 변화를 확인" \
   --portfolio-link "미국 성장주 비중과 IG/HY 채권 비중의 동시 점검 필요" \
   --source "Bloomberg|https://www.bloomberg.com/markets|2026-02-16T07:00:00+09:00"
 
 python3 scripts/world_memory_cli.py list --days 14 --format md
+python3 scripts/world_memory_cli.py taxonomy --refresh --format md
+python3 scripts/world_memory_cli.py states --status active --format md
+python3 scripts/world_memory_cli.py state-sync
 python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_report_$(date +%F).md
 ```
+
+상태 전이까지 반영하려면 `add` 시 아래 옵션을 함께 사용한다.
+- `--state-key`
+- `--state-label`
+- `--state-status`
+- `--state-bias`
+- `--net-effect`
+- `--supersedes-active`
+
+`story`만 있는 일반 `add`도 derived 상태를 자동 갱신한다. `state-sync`는 기존 적재분 백필/재구성용이다.

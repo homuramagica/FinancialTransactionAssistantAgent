@@ -1697,10 +1697,17 @@ def _extract_close_prices(raw: Any, symbols: list[str]) -> dict[str, float]:
 def _load_world_context(db_path: Path, *, days: int, limit: int) -> dict[str, Any]:
     now = _kst_now()
     if not db_path.exists():
-        return {"available": False, "db_path": str(db_path), "count": 0, "items": []}
+        return {
+            "available": False,
+            "db_path": str(db_path),
+            "count": 0,
+            "items": [],
+            "active_states": [],
+        }
 
     since = (now - dt.timedelta(days=max(1, days))).isoformat()
     items: list[dict[str, Any]] = []
+    active_states: list[dict[str, Any]] = []
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         try:
@@ -1718,6 +1725,22 @@ def _load_world_context(db_path: Path, *, days: int, limit: int) -> dict[str, An
             )
         except sqlite3.Error:
             rows = []
+        try:
+            state_rows = list(
+                conn.execute(
+                    """
+                    SELECT effective_from, state_key, state_label, state_status, state_bias,
+                           net_effect, summary, confidence
+                    FROM world_issue_states
+                    WHERE state_status IN ('active', 'watch')
+                    ORDER BY effective_from DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (max(1, limit),),
+                ).fetchall()
+            )
+        except sqlite3.Error:
+            state_rows = []
 
     for row in rows:
         payload = {}
@@ -1747,12 +1770,29 @@ def _load_world_context(db_path: Path, *, days: int, limit: int) -> dict[str, An
     for row in top:
         row.pop("_score", None)
 
+    for row in state_rows:
+        effective_from = _parse_datetime_safe(row["effective_from"]) or now
+        active_states.append(
+            {
+                "effective_from": effective_from.isoformat(),
+                "state_key": str(row["state_key"] or ""),
+                "state_label": str(row["state_label"] or ""),
+                "state_status": str(row["state_status"] or ""),
+                "state_bias": str(row["state_bias"] or ""),
+                "net_effect": str(row["net_effect"] or ""),
+                "summary": str(row["summary"] or ""),
+                "confidence": float(row["confidence"] or 0.0),
+            }
+        )
+
     return {
-        "available": True,
+        "available": bool(top or active_states),
         "db_path": str(db_path),
         "count": len(items),
         "items": top,
+        "active_states": active_states,
         "latest_as_of": top[0]["as_of"] if top else "",
+        "latest_state_at": active_states[0]["effective_from"] if active_states else "",
     }
 
 
@@ -1919,6 +1959,33 @@ def _render_prepare_markdown(payload: dict[str, Any]) -> str:
     lines.append("")
 
     world = payload.get("world_context", {})
+    lines.append("## Active World States")
+    lines.append("")
+    if world.get("available") and world.get("active_states"):
+        rows = []
+        for row in world.get("active_states", []):
+            effective_from = _parse_datetime_safe(row.get("effective_from"))
+            rows.append(
+                {
+                    "effective_from": effective_from.strftime("%Y-%m-%d %H:%M KST") if effective_from else "",
+                    "status": row.get("state_status", ""),
+                    "bias": row.get("state_bias", ""),
+                    "state_key": row.get("state_key", ""),
+                    "net_effect": row.get("net_effect", ""),
+                    "label": str(row.get("state_label", ""))[:60],
+                    "summary": str(row.get("summary", ""))[:100],
+                }
+            )
+        lines.append(
+            _fmt_table_md(
+                rows,
+                ["effective_from", "status", "bias", "state_key", "net_effect", "label", "summary"],
+            )
+        )
+    else:
+        lines.append("(not loaded or empty)")
+    lines.append("")
+
     lines.append("## Recent World Memory")
     lines.append("")
     if world.get("available") and world.get("items"):
@@ -2264,7 +2331,12 @@ def _handle_prepare_turn(args: argparse.Namespace) -> int:
 
     ready = bool(
         finance_signal.get("is_finance_related")
-        and (memory_hits or world_context.get("items") or portfolio_context.get("available"))
+        and (
+            memory_hits
+            or world_context.get("items")
+            or world_context.get("active_states")
+            or portfolio_context.get("available")
+        )
     )
     if ready:
         ready_reason = "Finance signal detected and context pack loaded."
@@ -2307,6 +2379,7 @@ def _handle_prepare_turn(args: argparse.Namespace) -> int:
             f"as_of={payload['as_of']}\n"
             f"finance_related={finance_signal.get('is_finance_related', False)}\n"
             f"memory_hits={len(memory_hits)} world_items={len(world_context.get('items', []))} "
+            f"world_states={len(world_context.get('active_states', []))} "
             f"portfolio_available={portfolio_context.get('available', False)}\n"
             f"ready={ready} reason={ready_reason}\n"
         )
