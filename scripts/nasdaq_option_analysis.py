@@ -357,6 +357,15 @@ def _build_price_figure(df: pd.DataFrame) -> go.Figure:
     fig.add_trace(
         go.Scatter(x=view.index, y=view["MA50"], mode="lines", name="MA50", line=dict(color="#DC2626", width=1.5))
     )
+    fig.add_trace(
+        go.Scatter(
+            x=view.index,
+            y=view["MA200"],
+            mode="lines",
+            name="MA200",
+            line=dict(color="#059669", width=1.7, dash="dot"),
+        )
+    )
     fig.update_layout(
         title="QQQ 가격 추이 (최근 120거래일)",
         xaxis_title="Date",
