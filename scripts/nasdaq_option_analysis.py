@@ -4,21 +4,65 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
+import math
 from pathlib import Path
+import sys
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.io import to_html
 import yfinance as yf
+
+try:
+    import plotly.graph_objects as go
+    from plotly.io import to_html as plotly_to_html
+except ModuleNotFoundError:
+    go = None
+    plotly_to_html = None
 
 
 KST = ZoneInfo("Asia/Seoul")
+HAS_PLOTLY = go is not None and plotly_to_html is not None
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _venv_python() -> Path:
+    return _project_root() / ".venv" / "bin" / "python"
 
 
 def _now_kst() -> dt.datetime:
     return dt.datetime.now(tz=KST)
+
+
+def _ensure_supported_runtime() -> None:
+    current_python = Path(sys.executable)
+    venv_python = _venv_python()
+    venv_root = venv_python.parent.parent
+    current_prefix = Path(sys.prefix)
+
+    if venv_python.exists() and current_prefix != venv_root:
+        raise SystemExit(
+            "이 스크립트는 프로젝트 가상환경으로 실행해야 합니다.\n"
+            f"현재 인터프리터: {current_python}\n"
+            f"현재 prefix: {current_prefix}\n"
+            f"권장 인터프리터: {venv_python}\n"
+            f"실행 예시: {venv_python} {Path(__file__).resolve()} --period 2y --max-exp 5 --outdir reports"
+        )
+
+    if not HAS_PLOTLY:
+        install_hint = (
+            f"uv pip install --python {venv_python} plotly"
+            if venv_python.exists()
+            else "python3 -m pip install plotly"
+        )
+        raise SystemExit(
+            "plotly 패키지가 현재 실행 환경에 없습니다.\n"
+            f"현재 인터프리터: {current_python}\n"
+            f"설치 예시: {install_hint}"
+        )
 
 
 def _safe_num(value: float | int | np.number | None) -> float:
@@ -72,6 +116,84 @@ def _calculate_macd(
     macd = ema_fast - ema_slow
     macd_signal = macd.ewm(span=signal, adjust=False).mean()
     return macd, macd_signal, macd - macd_signal
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _black_scholes_price(
+    spot: float,
+    strike: float,
+    time_years: float,
+    rate: float,
+    sigma: float,
+    option_type: str,
+    dividend_yield: float = 0.0,
+) -> float:
+    intrinsic = max(spot - strike, 0.0) if option_type == "call" else max(strike - spot, 0.0)
+    if time_years <= 0 or sigma <= 0:
+        return intrinsic
+
+    vol_term = sigma * math.sqrt(time_years)
+    if vol_term <= 0:
+        return intrinsic
+
+    d1 = (
+        math.log(max(spot, 1e-9) / max(strike, 1e-9))
+        + (rate - dividend_yield + 0.5 * sigma * sigma) * time_years
+    ) / vol_term
+    d2 = d1 - vol_term
+    disc_r = math.exp(-rate * time_years)
+    disc_q = math.exp(-dividend_yield * time_years)
+
+    if option_type == "call":
+        return spot * disc_q * _norm_cdf(d1) - strike * disc_r * _norm_cdf(d2)
+    return strike * disc_r * _norm_cdf(-d2) - spot * disc_q * _norm_cdf(-d1)
+
+
+def _estimate_implied_volatility(
+    option_price: float,
+    spot: float,
+    strike: float,
+    time_years: float,
+    rate: float,
+    option_type: str,
+) -> float:
+    if any(np.isnan(v) for v in [option_price, spot, strike, time_years, rate]):
+        return float("nan")
+    intrinsic = max(spot - strike, 0.0) if option_type == "call" else max(strike - spot, 0.0)
+    if option_price <= intrinsic + 1e-6 or time_years <= 0:
+        return float("nan")
+
+    low, high = 1e-4, 5.0
+    try:
+        for _ in range(80):
+            mid = (low + high) / 2
+            model_price = _black_scholes_price(spot, strike, time_years, rate, mid, option_type)
+            if model_price > option_price:
+                high = mid
+            else:
+                low = mid
+        return float((low + high) / 2)
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return float("nan")
+
+
+def _resolve_option_price(row: pd.Series) -> float:
+    bid = _safe_num(row.get("bid"))
+    ask = _safe_num(row.get("ask"))
+    last_price = _safe_num(row.get("lastPrice"))
+
+    if not np.isnan(bid) and not np.isnan(ask) and bid > 0 and ask > 0:
+        return float((bid + ask) / 2)
+    if not np.isnan(last_price) and last_price > 0:
+        return float(last_price)
+    if not np.isnan(bid) and bid > 0:
+        return float(bid)
+    if not np.isnan(ask) and ask > 0:
+        return float(ask)
+    return float("nan")
 
 
 def _calculate_anchored_vwap(df: pd.DataFrame, anchor_idx: pd.Timestamp) -> pd.Series:
@@ -278,10 +400,12 @@ def _fetch_option_data(max_exp: int, strike_band: float) -> tuple[pd.DataFrame, 
     last_close = float(hist["Close"].iloc[-1])
 
     frames: list[pd.DataFrame] = []
+    approx_rate = 0.043
     for exp in expiries:
         oc = ticker.option_chain(exp)
         exp_date = dt.datetime.strptime(exp, "%Y-%m-%d").date()
         dte = (exp_date - _now_kst().date()).days
+        time_years = max(dte, 1) / 365.0
 
         for opt_type, src in (("call", oc.calls), ("put", oc.puts)):
             if src is None or src.empty:
@@ -290,6 +414,7 @@ def _fetch_option_data(max_exp: int, strike_band: float) -> tuple[pd.DataFrame, 
             d["type"] = opt_type
             d["expiry"] = exp
             d["dte"] = dte
+            d["time_years"] = time_years
             frames.append(d)
 
     if not frames:
@@ -300,8 +425,38 @@ def _fetch_option_data(max_exp: int, strike_band: float) -> tuple[pd.DataFrame, 
         if col in all_opt.columns:
             all_opt[col] = pd.to_numeric(all_opt[col], errors="coerce")
 
+    all_opt["impliedVolatilityRaw"] = all_opt["impliedVolatility"]
+    all_opt["optionPrice"] = all_opt.apply(_resolve_option_price, axis=1)
+    intrinsic = np.where(
+        all_opt["type"].eq("call"),
+        np.maximum(last_close - all_opt["strike"], 0.0),
+        np.maximum(all_opt["strike"] - last_close, 0.0),
+    )
+    all_opt["calc_impliedVolatility"] = all_opt.apply(
+        lambda row: _estimate_implied_volatility(
+            option_price=_safe_num(row.get("optionPrice")),
+            spot=last_close,
+            strike=_safe_num(row.get("strike")),
+            time_years=_safe_num(row.get("time_years")),
+            rate=approx_rate,
+            option_type=str(row.get("type")),
+        ),
+        axis=1,
+    )
+    raw_iv = all_opt["impliedVolatilityRaw"]
+    calc_iv = all_opt["calc_impliedVolatility"]
+    premium = all_opt["optionPrice"]
+    discrepancy = calc_iv / raw_iv.replace(0, np.nan)
+    replacement_mask = calc_iv.notna() & (
+        raw_iv.isna()
+        | (raw_iv <= 0)
+        | ((premium > (intrinsic + 0.25)) & ((raw_iv < 0.08) | (discrepancy > 3.0)))
+    )
+    all_opt["iv_source"] = np.where(replacement_mask, "model_fallback", "yfinance")
+    all_opt["impliedVolatility"] = np.where(replacement_mask, calc_iv, raw_iv)
+
     all_opt = all_opt.dropna(subset=["strike", "impliedVolatility"]).copy()
-    all_opt = all_opt[all_opt["impliedVolatility"] > 0]
+    all_opt = all_opt[(all_opt["impliedVolatility"] > 0.01) & (all_opt["impliedVolatility"] <= 5.0)]
     all_opt = all_opt[
         all_opt["strike"].between(last_close * (1.0 - strike_band), last_close * (1.0 + strike_band))
     ].copy()
@@ -620,6 +775,169 @@ def _build_conclusion(
     return lines[:4]
 
 
+def _level_gap_pct(price: float, level: float) -> float:
+    if np.isnan(price) or np.isnan(level) or level == 0:
+        return float("nan")
+    return (price / level - 1.0) * 100.0
+
+
+def _build_data_interpretation_paragraphs(
+    curr: pd.Series,
+    pcr_oi: float,
+    pcr_vol: float,
+    max_pain: float,
+    term_df: pd.DataFrame,
+    oi_total: pd.DataFrame,
+    macro_stats: dict[str, float | str] | None,
+    trend_info: dict[str, object],
+    smc_result: dict[str, object],
+    poc_price: float,
+    avwap_now: float,
+) -> list[str]:
+    close = _safe_num(curr.get("Close"))
+    ret_1d = _safe_num(curr.get("RET_1D"))
+    ret_5d = _safe_num(curr.get("RET_5D"))
+    ret_1m = _safe_num(curr.get("RET_1M"))
+    rsi = _safe_num(curr.get("RSI"))
+    rv20 = _safe_num(curr.get("RV20"))
+    atr14 = _safe_num(curr.get("ATR14"))
+    ma20 = _safe_num(curr.get("MA20"))
+    ma50 = _safe_num(curr.get("MA50"))
+    ma200 = _safe_num(curr.get("MA200"))
+
+    ma20_gap = _level_gap_pct(close, ma20)
+    ma50_gap = _level_gap_pct(close, ma50)
+    ma200_gap = _level_gap_pct(close, ma200)
+    avwap_gap = _level_gap_pct(close, avwap_now)
+    poc_gap = _level_gap_pct(close, poc_price)
+    max_pain_gap = _level_gap_pct(close, max_pain)
+
+    if np.isnan(rsi):
+        rsi_tone = "모멘텀 판정은 중립으로 유보하는 편이 좋습니다."
+    elif rsi >= 60:
+        rsi_tone = "RSI가 60 이상으로 올라와 단기 모멘텀은 상방 쪽이 조금 더 우세합니다."
+    elif rsi <= 40:
+        rsi_tone = "RSI가 40 아래로 밀려 단기 체력은 아직 완전히 회복되지 않았습니다."
+    else:
+        rsi_tone = "RSI가 중립권에 있어 추세 추종보다 레벨 대응이 더 중요한 구간입니다."
+
+    paragraph_1 = (
+        f"QQQ는 현재 {_fmt_price(close)}로 1일 {_fmt_pct(ret_1d)}, 5일 {_fmt_pct(ret_5d)}, "
+        f"1개월 {_fmt_pct(ret_1m)} 흐름을 보이고 있습니다. 가격은 20일선 대비 {_fmt_pct(ma20_gap)}, "
+        f"50일선 대비 {_fmt_pct(ma50_gap)}, 200일선 대비 {_fmt_pct(ma200_gap)} 위치에 있어 "
+        f"장기적으로는 {trend_info['long_trend']} 레짐을 유지하면서도 단기적으로는 "
+        f"{trend_info['short_trend']} 성격이 섞여 있는 상태입니다. "
+        f"{rsi_tone} "
+        f"또한 AVWAP 대비 {_fmt_pct(avwap_gap)}, POC 대비 {_fmt_pct(poc_gap)} 수준이라는 점은 "
+        "지금 가격대가 단순한 이탈 구간이 아니라 실제 거래가 누적된 밀집 구간 위에서 움직이고 있음을 뜻합니다."
+    )
+
+    top_strikes = [f"{float(v):.0f}" for v in oi_total["strike"].tolist()[:4]]
+    strike_text = ", ".join(top_strikes) if top_strikes else "데이터 공백"
+    if np.isnan(max_pain_gap):
+        max_pain_text = "Max Pain 해석은 이번 데이터에서는 제한적입니다."
+    elif abs(max_pain_gap) < 1.0:
+        max_pain_text = (
+            f"현물 가격이 Max Pain({_fmt_price(max_pain)})와 매우 가까워 만기 전 가격이 해당 구간에 붙는 핀 현상을 경계할 필요가 있습니다."
+        )
+    elif max_pain_gap > 0:
+        max_pain_text = (
+            f"현물 가격이 Max Pain({_fmt_price(max_pain)})를 {_fmt_pct(max_pain_gap)} 상회하고 있어 "
+            "단기적으로는 상단에서 되돌림 압력이 걸릴 여지가 남아 있습니다."
+        )
+    else:
+        max_pain_text = (
+            f"현물 가격이 Max Pain({_fmt_price(max_pain)})를 {_fmt_pct(abs(max_pain_gap))} 밑돌고 있어 "
+            "만기 접근 과정에서 상방 복귀 시도가 나올 수 있습니다."
+        )
+
+    if pcr_oi > 1.15 and pcr_vol > 1.15:
+        hedge_text = "OI와 거래량 기준 Put/Call 비율이 모두 1을 웃돌아, 옵션 시장 참여자들은 상방 추격보다 하방 방어에 더 많은 비용을 지불하고 있습니다."
+    elif pcr_oi < 0.9 and pcr_vol < 0.9:
+        hedge_text = "OI와 거래량 기준 Put/Call 비율이 모두 낮아, 시장은 방어보다 상방 참여에 더 무게를 두는 모습입니다."
+    else:
+        hedge_text = "Put/Call 비율은 한쪽으로 과도하게 기울었다기보다, 방향 베팅과 헤지가 혼재된 상태로 읽는 편이 적절합니다."
+
+    paragraph_2 = (
+        f"옵션 포지셔닝에서는 OI 기준 Put/Call 비율이 {_fmt_ratio(pcr_oi)}, 거래량 기준이 {_fmt_ratio(pcr_vol)}로 집계됐습니다. "
+        f"{hedge_text} OI가 많이 쌓인 스트라이크는 {strike_text}달러 부근이며, 이는 단기적으로 "
+        "호가가 자주 붙고 이탈 시 감마 반응이 커질 수 있는 가격대라는 뜻입니다. "
+        f"{max_pain_text}"
+    )
+
+    short_iv = _safe_num(term_df.iloc[0]["atm_iv"]) if not term_df.empty else float("nan")
+    long_iv = _safe_num(term_df.iloc[-1]["atm_iv"]) if not term_df.empty else float("nan")
+    iv_rv_gap = float("nan") if np.isnan(short_iv) or np.isnan(rv20) else short_iv - rv20
+
+    if np.isnan(short_iv) or np.isnan(long_iv):
+        iv_shape_text = "ATM IV 만기 구조를 충분히 읽기 어려워 변동성 해석은 보수적으로 접근해야 합니다."
+    elif short_iv > long_iv + 1.0:
+        iv_shape_text = (
+            f"근월 ATM IV가 {short_iv:.2f}%로 원월 {long_iv:.2f}%보다 높아, 시장이 아주 가까운 일정에서 더 큰 이벤트 리스크를 반영하고 있습니다."
+        )
+    elif long_iv > short_iv + 1.0:
+        iv_shape_text = (
+            f"원월 ATM IV가 {long_iv:.2f}%로 더 높아, 단기 이벤트보다 중기 불확실성을 더 크게 가격에 반영하는 구조입니다."
+        )
+    else:
+        iv_shape_text = (
+            f"근월 ATM IV {short_iv:.2f}%와 원월 {long_iv:.2f}%의 차이가 크지 않아, 변동성 프리미엄은 전체 만기 구간에 비교적 고르게 퍼져 있습니다."
+        )
+
+    if np.isnan(iv_rv_gap):
+        iv_rv_text = "실현변동성과 옵션 프리미엄의 상대 가격 비교는 제한적입니다."
+    elif iv_rv_gap > 4.0:
+        iv_rv_text = (
+            f"근월 IV가 최근 20일 실현변동성 {rv20:.2f}%보다 높아, 단기 옵션 프리미엄은 다소 비싸게 거래되고 있습니다."
+        )
+    elif iv_rv_gap < -2.0:
+        iv_rv_text = (
+            f"근월 IV가 최근 20일 실현변동성 {rv20:.2f}%보다 낮아, 옵션 프리미엄이 상대적으로 눌려 있는 편입니다."
+        )
+    else:
+        iv_rv_text = (
+            f"근월 IV와 최근 20일 실현변동성({rv20:.2f}%) 사이 괴리가 크지 않아, 옵션 가격은 최근 실제 변동을 대체로 무난하게 반영하고 있습니다."
+        )
+
+    paragraph_3 = (
+        f"{iv_shape_text} {iv_rv_text} "
+        f"최근 ATR14가 {_fmt_price(atr14)}라는 점을 감안하면, 당일 방향을 맞히는 것만큼이나 "
+        "하루 변동폭을 감당할 수 있는 포지션 크기와 손절 간격을 어떻게 잡느냐가 더 중요합니다."
+    )
+
+    if macro_stats:
+        vix_curr = _safe_num(macro_stats.get("vix_curr"))
+        dxy_corr = _safe_num(macro_stats.get("dxy_corr"))
+        yield_corr = _safe_num(macro_stats.get("yield_corr"))
+        rs_slope = _safe_num(macro_stats.get("rs_slope_20d"))
+        macro_paragraph = (
+            f"거시 배경에서는 VIX가 {vix_curr:.2f}로 {macro_stats.get('vix_status')} 국면에 있고, "
+            f"달러와의 60일 상관은 {dxy_corr:.2f}, 10년물 금리와의 60일 상관은 {yield_corr:.2f}입니다. "
+            f"QQQ/SPY 상대강도 변화가 {rs_slope:.2f}%라는 점은 나스닥이 광범위 시장 대비 어느 정도 주도력을 유지하고 있는지 보여줍니다. "
+            f"여기에 내부 수급은 {smc_result['order_flow']}로 읽히고 AMD 국면 판정은 {smc_result['amd_phase']}이므로, "
+            "현재 구간은 방향성 확신 하나로 밀어붙이기보다 가격 레벨과 옵션 수급이 만나는 지점을 따라가는 전략이 더 적합합니다."
+        )
+    else:
+        macro_paragraph = (
+            f"거시 보조 지표는 충분히 확보되지 않았지만, 내부 수급은 {smc_result['order_flow']}로 읽히고 "
+            f"AMD 국면은 {smc_result['amd_phase']}으로 분류됩니다. 따라서 지금은 거대한 거시 서사보다 "
+            "실제 체결이 쌓인 가격대와 옵션 포지셔닝의 변화를 우선해서 보는 편이 더 실무적입니다."
+        )
+
+    return [paragraph_1, paragraph_2, paragraph_3, macro_paragraph]
+
+
+def _chart_fallback_html(title: str) -> str:
+    return (
+        "<div style='border:1px dashed #cbd5e1; border-radius:12px; padding:16px; "
+        "margin:10px 0 16px; background:#f8fafc; color:#475569;'>"
+        f"<strong>{html.escape(title)}</strong>"
+        "<p style='margin:8px 0 0;'>"
+        "plotly 패키지가 설치되어 있지 않아 차트는 생략하고 정량 요약과 표 중심으로 보고서를 생성했습니다."
+        "</p></div>"
+    )
+
+
 def _build_trend_summary(curr: pd.Series, p1d: pd.Series, p1m: pd.Series, df_all: pd.DataFrame) -> dict[str, object]:
     ma200 = _safe_num(curr.get("MA200"))
     ma20 = _safe_num(curr.get("MA20"))
@@ -689,21 +1007,30 @@ def _render_html(
         .head(5)
     )
 
-    fig_price = _build_price_figure(price_df)
-    fig_volume = _build_volume_figure(price_df)
-    fig_macd = _build_macd_figure(price_df)
-    fig_oi = _build_oi_figure(opt_df, expiries[0])
-    fig_term = _build_term_structure_figure(
-        term_df if not term_df.empty else pd.DataFrame({"dte": [], "atm_iv": [], "expiry": []})
-    )
-    fig_surface = _build_surface_figure(opt_df)
+    fallback_count = int(opt_df["iv_source"].eq("model_fallback").sum()) if "iv_source" in opt_df.columns else 0
 
-    price_div = to_html(fig_price, include_plotlyjs="cdn", full_html=False)
-    volume_div = to_html(fig_volume, include_plotlyjs=False, full_html=False)
-    macd_div = to_html(fig_macd, include_plotlyjs=False, full_html=False)
-    oi_div = to_html(fig_oi, include_plotlyjs=False, full_html=False)
-    term_div = to_html(fig_term, include_plotlyjs=False, full_html=False)
-    surface_div = to_html(fig_surface, include_plotlyjs=False, full_html=False)
+    if HAS_PLOTLY:
+        fig_price = _build_price_figure(price_df)
+        fig_volume = _build_volume_figure(price_df)
+        fig_macd = _build_macd_figure(price_df)
+        fig_oi = _build_oi_figure(opt_df, expiries[0])
+        fig_term = _build_term_structure_figure(
+            term_df if not term_df.empty else pd.DataFrame({"dte": [], "atm_iv": [], "expiry": []})
+        )
+        fig_surface = _build_surface_figure(opt_df)
+        price_div = plotly_to_html(fig_price, include_plotlyjs="cdn", full_html=False)
+        volume_div = plotly_to_html(fig_volume, include_plotlyjs=False, full_html=False)
+        macd_div = plotly_to_html(fig_macd, include_plotlyjs=False, full_html=False)
+        oi_div = plotly_to_html(fig_oi, include_plotlyjs=False, full_html=False)
+        term_div = plotly_to_html(fig_term, include_plotlyjs=False, full_html=False)
+        surface_div = plotly_to_html(fig_surface, include_plotlyjs=False, full_html=False)
+    else:
+        price_div = _chart_fallback_html("QQQ 가격 추이")
+        volume_div = _chart_fallback_html("거래량 추이")
+        macd_div = _chart_fallback_html("MACD")
+        oi_div = _chart_fallback_html("최근 만기 OI 분포")
+        term_div = _chart_fallback_html("ATM IV 만기 구조")
+        surface_div = _chart_fallback_html("QQQ IV Surface (3D Surface)")
 
     conclusion_lines = _build_conclusion(
         spot=spot,
@@ -806,17 +1133,32 @@ def _render_html(
         macro_lines = ["거시 보조 지표를 충분히 수집하지 못해 기술/옵션 신호 중심으로 해석했습니다."]
     macro_html = "".join([f"<li>{html.escape(line)}</li>" for line in macro_lines])
 
-    glossary_rows = "".join(
-        [
-            "<tr><td>SMC</td><td>시장 구조와 유동성(고점/저점 사냥)을 기반으로 흐름을 해석하는 방법입니다.</td></tr>",
-            "<tr><td>AVWAP</td><td>특정 기준 시점 이후의 거래량 가중 평균가격으로, 기관 평균 단가 추정에 씁니다.</td></tr>",
-            "<tr><td>POC</td><td>거래가 가장 많이 몰린 가격대로 지지/저항 후보가 됩니다.</td></tr>",
-            "<tr><td>Max Pain</td><td>옵션 매수자 손실이 커지는 이론 가격으로 만기 전 핀 압력에 참고합니다.</td></tr>",
-            "<tr><td>VIX</td><td>미국 증시의 단기 공포 수준을 나타내는 변동성 지수입니다.</td></tr>",
-        ]
+    interpretation_paragraphs = _build_data_interpretation_paragraphs(
+        curr=curr,
+        pcr_oi=float(pcr_oi),
+        pcr_vol=float(pcr_vol),
+        max_pain=max_pain,
+        term_df=term_df,
+        oi_total=oi_total,
+        macro_stats=macro_stats,
+        trend_info=trend_info,
+        smc_result=smc_result,
+        poc_price=poc_price,
+        avwap_now=avwap_now,
+    )
+    interpretation_html = "".join(
+        [f"<p>{html.escape(paragraph)}</p>" for paragraph in interpretation_paragraphs]
     )
 
     conclusion_html = "".join([f"<li>{html.escape(line)}</li>" for line in conclusion_lines])
+    iv_note_parts = []
+    if fallback_count:
+        iv_note_parts.append(f"단기 Yahoo IV 품질 이슈로 {fallback_count:,}개 계약은 옵션 가격 기반 추정 IV로 보정")
+    else:
+        iv_note_parts.append("Yahoo 원시 IV를 사용")
+    if not HAS_PLOTLY:
+        iv_note_parts.append("plotly 미설치로 차트는 생략")
+    iv_note = " | ".join(iv_note_parts)
 
     html_doc = f"""<!doctype html>
 <html lang="ko">
@@ -904,6 +1246,11 @@ def _render_html(
     .muted {{
       color: var(--muted);
     }}
+    .prose p {{
+      margin: 0 0 14px;
+      font-size: 15px;
+      color: #1e293b;
+    }}
   </style>
 </head>
 <body>
@@ -912,6 +1259,7 @@ def _render_html(
       <h1>나스닥 옵션 분석 (QQQ)</h1>
       <p class="meta">as of (KST): {as_of.strftime("%Y-%m-%d %H:%M:%S")}</p>
       <p class="meta">데이터 상태: yfinance 기준 최근 체결/전일 종가 혼합 (지연 가능)</p>
+      <p class="meta">IV 처리: {html.escape(iv_note)}</p>
       <p class="meta">파일: {html.escape(str(out_path))}</p>
       <div class="grid">
         <div class="metric"><div class="label">QQQ 현재가</div><div class="value">{_fmt_price(_safe_num(curr.get("Close")))}</div></div>
@@ -975,11 +1323,8 @@ def _render_html(
     </section>
 
     <section class="card">
-      <h2>5. 초보자를 위한 용어 가이드</h2>
-      <table>
-        <thead><tr><th>용어</th><th>설명</th></tr></thead>
-        <tbody>{glossary_rows}</tbody>
-      </table>
+      <h2>5. 데이터 해석</h2>
+      <div class="prose">{interpretation_html}</div>
     </section>
 
     <section class="card">
@@ -1009,6 +1354,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    _ensure_supported_runtime()
     args = _parse_args()
     as_of = _now_kst()
     outdir = Path(args.outdir)

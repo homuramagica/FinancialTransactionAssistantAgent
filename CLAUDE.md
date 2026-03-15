@@ -103,6 +103,10 @@
   - `region`: `US`, `KR`, `GLOBAL`
   - `importance`: `high|medium|low`
   - `sources`(매체명/URL/게시시각)
+- **어닝(earnings) 이벤트는 고우선순위로 취급한다.**
+  - `event_kind/tags/title/summary`에서 어닝 신호가 감지되면 `importance`는 최소 `medium`으로 상향한다.
+  - 가이던스 상·하향, beat/miss, 실적 서프라이즈/쇼크 등 강한 신호는 `importance=high`로 우선 저장한다.
+  - `brief` 엔트리에서 어닝 신호가 있고 `category=emerging`인 경우 `category=stock_bond`로 보정해 기업 동향으로 집계한다.
 - 외부 세계 메모리 구축 시에는 **FEED를 기본 사용한다.**
   - 기본 소스: `yfinance + FEED + 고신뢰 웹 검색`
   - 영어권 우선 출처: `WSJ`, `FT`, `Bloomberg` (필요 시 2차 신뢰도 확장)
@@ -115,6 +119,11 @@
 - **월드메모리 보고서 모드**는 사용자가 `월드메모리 보고서`(또는 동등한 명시 표현)를 요청한 경우에만 발동한다.
   - 이 경우 `world_issue_log`를 우선 조회하고 부족분만 웹 검색으로 보강한다.
   - 출력은 `미국/한국/글로벌 주식·채권`, `글로벌 정치`, `비지배 관심 이슈`를 분리한다.
+- **최근 산업계 동향 모드**는 사용자가 `최근 산업계 동향`(또는 “메가뉴스에 가려진 산업 흐름” 동등 표현)을 요청한 경우 발동한다.
+  - 기본 실행 명령: `python3 scripts/world_memory_cli.py report --preset "최근 산업계 동향" --days 30 --out reports/recent_industry_trends_$(date +%F).md`
+  - 이 모드는 매크로/메가톤 헤드라인보다 기업·산업의 실행 신호(투자, 생산, 공급망, 자본배분, 조달)를 우선 반영한다.
+  - 보고서 제목은 항상 괄호 없이 `최근 산업계 동향`으로 사용한다.
+  - 기본 응답은 본문 장문 출력 대신 `reports/` 저장 경로와 핵심 요약만 간단히 안내한다.
 - **시장 분석 모드**(예: “요즘 시장 동향 알려줘”, “지금 시장 어때”)에서는 `SKILLs/MarketAnalysis.md`를 기준으로 답변한다.
   - 이때 월드메모리 **별도 보고서**는 작성하지 않는다.
   - 필요하면 `world_issue_log`는 내부 참고용으로만 활용하고, 결과는 시장 분석 본문에 통합한다.

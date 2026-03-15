@@ -218,6 +218,10 @@ python3 scripts/counsel_memory_cli.py prepare-turn \
   - `category`: `stock_bond`, `geopolitics`, `emerging`
   - `region`: `US`, `KR`, `GLOBAL`
   - `importance`: `high`, `medium`, `low`
+- 어닝(earnings) 우선순위 규칙:
+  - `event_kind/tags/title/summary`에서 어닝 신호가 감지되면 `importance`를 최소 `medium`으로 자동 상향한다.
+  - 가이던스 상·하향, beat/miss, 실적 서프라이즈/쇼크 등 강한 신호는 `importance=high`로 자동 상향한다.
+  - `brief`에서 어닝 신호가 있고 `category=emerging`이면 `category=stock_bond`로 자동 보정한다.
 - `story`, `tags`, `tickers`는 기존 값을 우선 재사용하고, 기존 규격으로 설명이 어려울 때만 새 값을 최소 단위로 추가한다.
 - `state_key`, `net_effect`도 기존 값을 우선 재사용하고, 꼭 필요한 경우에만 새 키를 추가한다.
 - `brief` 메모는 `subjects`, `industries`, `event_kind`, `dedupe_key`를 중심으로 저장하며 기본적으로 derived state를 만들지 않는다.
@@ -337,6 +341,7 @@ python3 scripts/world_memory_cli.py brief-add \
 ```
 
 - `brief-add`는 `category=emerging`, `region=GLOBAL`, `importance=low`를 기본값으로 사용한다.
+- 단, 어닝 신호가 감지되면 기본값보다 높은 우선순위 규칙(자동 중요도 상향/카테고리 보정)이 적용된다.
 - 주체/산업/이벤트 중 최소 하나는 있어야 저장된다.
 - 기본 `dedupe_key`는 제목/주체/산업/날짜를 바탕으로 자동 생성된다.
 
@@ -364,6 +369,8 @@ python3 scripts/world_memory_cli.py list --entry-mode brief --subject Jensen --d
 
 ```bash
 python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_report_$(date +%F).md
+python3 scripts/world_memory_cli.py report --preset recent_industry_trends --days 30 --out reports/recent_industry_trends_$(date +%F).md
+python3 scripts/world_memory_cli.py report --preset "최근 산업계 동향" --days 30 --out reports/recent_industry_trends_$(date +%F).md
 ```
 
 `report` 기본 섹션:
@@ -374,6 +381,11 @@ python3 scripts/world_memory_cli.py report --days 14 --out reports/world_memory_
 5. 비지배적 관심 이슈
 6. 포트폴리오 상담 반영 체크포인트
 7. 결론
+
+`report --preset recent_industry_trends` (또는 `--preset "최근 산업계 동향"`)은
+- 보고서 제목 기본값을 `최근 산업계 동향`으로 사용하고,
+- 매크로/메가톤 헤드라인보다 기업·산업 실행 신호를 우선 추출하며,
+- `entry-mode` 기본 `issue`를 자동으로 `all`로 확장해 brief 로그까지 함께 반영한다.
 
 ## 의존성 메모
 - 필수: `yfinance`, `pandas`, `matplotlib`
