@@ -56,7 +56,7 @@
   https://news.einfomax.co.kr
 
 ## 외부 세계 메모리 로그 (중기 동향)
-- 로그 파일: `portfolio/world_issue_log.jsonl`
+- 기본 저장소(SQLite): `portfolio/world_issue_log.sqlite3`
 - CLI: `scripts/world_memory_cli.py`
 - 목적: 속보가 아닌 시장 동향/정치 이슈/관심 이슈의 누적 기억
 

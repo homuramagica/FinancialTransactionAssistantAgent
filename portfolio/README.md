@@ -131,7 +131,7 @@ python3 scripts/world_memory_cli.py brief-add \
   --source "Regular media feed|https://rss.app/feeds/_hc8HiU0HyBWHfWoM.csv|2026-03-10T08:35:00+09:00"
 
 python3 scripts/world_memory_cli.py brief-import \
-  --from-file tmp/world_memory_briefs.jsonl \
+  --from-file tmp/world_memory_briefs.json \
   --skip-if-duplicate
 
 python3 scripts/world_memory_cli.py list --entry-mode brief --subject Jensen --days 30 --format md
@@ -146,4 +146,4 @@ python3 scripts/world_memory_cli.py list --entry-mode brief --subject Jensen --d
 - `--supersedes-active`
 
 `story`만 있는 일반 `add`도 derived 상태를 자동 갱신한다. `state-sync`는 기존 적재분 백필/재구성용이다.
-`brief-add`/`brief-import`는 주체·산업 브리프를 저장한다. 기본적으로 `derive_state=false`이며 `dedupe_key`로 중복 적재를 제어한다.
+`brief-add`/`brief-import`는 주체·산업 브리프를 저장한다. 기본적으로 `derive_state=false`이며 `dedupe_key`로 중복 적재를 제어한다. 자동화 예제는 `.json` 입력을 기준으로 유지하고, `.jsonl`은 레거시 호환용으로만 남긴다.

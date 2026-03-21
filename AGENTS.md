@@ -88,9 +88,21 @@
   - FEED는 최신 변화 탐지용으로 기본 호출하되, 핵심 사실과 행동 제안은 고신뢰 웹 검색 및 공식 자료로 재검증한다.
   - 출력에서는 정량지표 외 행동편향/목표/라이프사이클 맥락을 반드시 포함한다.
 
+## 군사 충돌/전쟁 이슈 분류 원칙
+- **카테고리 자동 지정**: 군사 충돌 키워드(war, military, strike, attack, missile, drone attack, airstrike, bombing, troops, retaliation, 전쟁, 공격, 폭격, 미사일, 피격, 파병, 증파 등)가 감지되면 `category=geopolitics`로 자동 분류한다.
+- **중요도(importance) 판단 기준**:
+  - 글로벌 에너지·금융 시스템에 직접 충격을 줄 수 있는 **고강도 분쟁**이 확인되면 `importance=high`로 지정한다.
+  - 대표적 고영향 분쟁축(예시): 중동(미-이란, 이스라엘-이란, 걸프), 인도-파키스탄, 중국-대만 등
+  - 단, 위 세 축은 예시일 뿐이다. **예상 밖의 충돌**(예: 러시아-나토 직접 교전, 핵 위협 고조 등)이라도 시장 충격 강도가 높으면 `importance=high`로 지정한다.
+  - 시장 충격이 제한적이거나 아직 불확실한 분쟁은 `importance=medium`을 기본값으로 하고, 충격이 확인되면 high로 상향한다.
+- **스토리 분리 원칙**: 군사 작전·전쟁 자체는 에너지/해운 등 파생 이슈와 **별도의 독립 스토리**로 관리한다.
+  - 예: '미-이란 전쟁'(군사 작전·외교·전황)과 '중동 리스크와 에너지 가격'(유가·해운·공급충격)은 각각 독립 스토리로 유지한다.
+  - 하나의 엔트리가 양쪽 성격을 모두 가질 경우, **군사 작전이 주된 내용이면 전쟁 스토리에**, 에너지 공급 영향이 주된 내용이면 에너지 스토리에 배정한다.
+
 ## 외부 세계 메모리 로그 원칙 (중기 템포)
 - 사용자의 개인 로그(심리/가치관)와 별도로, **외부 세계 상태 로그**를 누적한다.
 - 목적은 속보 요약이 아니라 **요즘 시장 동향/지속 이슈**의 기억 축적이다.
+- 사용자가 `월드 메모리 업데이트 해 줘`, `월드 메모리 업데이트`, `월드 메모리 확보 작업`처럼 짧게 요청하면, 아래 월드 메모리 업데이트 절차 전체를 수행하라는 뜻으로 해석한다.
 - `world_memory`는 raw article 전문 저장소가 아니라 **summary-first memory**다.
 - 저장 단위는 기본적으로 이슈 요약본(1~2문단)이며, `summary`, `why_it_matters`, `portfolio_link`, `story`, `story_thesis`, `story_checkpoint`, `sources`, `tags`, `tickers`를 우선 채운다.
 - raw article 전문은 접근 가능할 때만 선택적으로 보조 저장하며, `world_memory`의 기본 필수값으로 취급하지 않는다.
@@ -116,6 +128,17 @@
 - 분류는 기존 규격(`category`, `region`, `importance`, 기존 `story/tags/tickers`)을 우선 재사용한다.
 - 기존 규격으로 의미를 담기 어려울 때만 신규 분류를 최소 단위로 추가하며, 동의어 중복, 일회성 라벨, 과도한 세분화는 지양한다.
 - 향후 뉴스 메모리 DB의 entity/event/relation/type/tag 설계에서도 초기 설정된 타입과 사전을 우선 사용하고, 신규 타입은 꼭 필요할 때만 제한적으로 추가한다.
+- **월드 메모리 업데이트 절차**:
+  - 시작 전에 `python3 scripts/world_memory_cli.py list --days 30 --format md`, `python3 scripts/world_memory_cli.py states --status active --format md`, `python3 scripts/world_memory_cli.py taxonomy --refresh --format md`, `python3 scripts/world_memory_cli.py taxonomy --type state_key --format md`, `python3 scripts/world_memory_cli.py taxonomy --type subject --format md`를 먼저 실행해 최근 로그와 taxonomy를 확인한다.
+  - 저장소는 기본적으로 `portfolio/world_issue_log.sqlite3`만 사용한다.
+  - 한 번 실행할 때 가장 중요한 1건만 고르지 말고, 의미 있는 `brief`가 여러 개 있으면 가능한 범위에서 `3~8건` 정도 함께 적재한다.
+  - 같은 실행에서 동일 `subject`에 과도하게 쏠리지 않도록 하고, 같은 주체는 기본적으로 `최대 2건` 정도로 제한한다.
+  - `brief`는 정책 주체, 기업, 기관, 산업 동향이 균형 있게 섞이도록 우선순위를 조정한다.
+  - `brief-add` 또는 `brief-import`를 사용할 때는 `subjects`, `industries`, `event_kind`, `dedupe_key`, `sources`를 붙이고 derived state를 만들지 않는다.
+  - `brief-import`를 사용할 때는 항상 `.json` 입력만 사용하고 `.jsonl`은 사용하지 않는다.
+  - 현재 레짐의 상태 변화나 우세 해석 변화가 확인되면 `add`에 `--state-key`, `--state-label`, `--state-status`, `--state-bias`, `--net-effect`를 함께 사용한다.
+  - 같은 `state_key`의 기존 `active/watch` 상태를 명확히 대체하는 경우 `--supersedes-active`를 사용한다.
+  - 트럼프 같은 단일 인물 헤드라인만 반복 저장하지 말고, 정책 주체, 기업, 산업 동향이 균형 있게 섞이도록 유지한다.
 - **월드메모리 보고서 모드**는 사용자가 `월드메모리 보고서`(또는 동등한 명시 표현)를 요청한 경우에만 발동한다.
   - 이 경우 `world_issue_log`를 우선 조회하고 부족분만 웹 검색으로 보강한다.
   - 출력은 `미국/한국/글로벌 주식·채권`, `글로벌 정치`, `비지배 관심 이슈`를 분리한다.

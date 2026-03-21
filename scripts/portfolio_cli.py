@@ -21,7 +21,7 @@ DEFAULT_BASE_DIR = "portfolio"
 DEFAULT_TZ = "Asia/Seoul"
 POSITION_LOG_FILE = "position_log.jsonl"
 DECISION_LOG_FILE = "decision_log.jsonl"
-WORLD_LOG_FILE = "world_issue_log.jsonl"
+WORLD_DB_FILE = "world_issue_log.sqlite3"
 
 POSITION_EVENT_TRADE = "trade"
 POSITION_EVENT_CASH = "cash"
@@ -222,16 +222,17 @@ def _portfolio_paths(base_dir: str) -> tuple[Path, Path, Path]:
     return base, base / POSITION_LOG_FILE, base / DECISION_LOG_FILE
 
 
+def _world_memory_db_path(base_dir: str) -> Path:
+    return Path(base_dir) / WORLD_DB_FILE
+
+
 def _ensure_logs(base_dir: str) -> tuple[Path, Path, Path]:
     base, position_log, decision_log = _portfolio_paths(base_dir)
-    world_log = base / WORLD_LOG_FILE
     base.mkdir(parents=True, exist_ok=True)
     if not position_log.exists():
         position_log.touch()
     if not decision_log.exists():
         decision_log.touch()
-    if not world_log.exists():
-        world_log.touch()
     return base, position_log, decision_log
 
 
@@ -664,11 +665,11 @@ def _build_decision_payload(
 
 def _handle_init(args: argparse.Namespace) -> int:
     base, position_log, decision_log = _ensure_logs(args.base_dir)
-    world_log = base / WORLD_LOG_FILE
+    world_db = _world_memory_db_path(args.base_dir)
     print(f"Initialized: {base}")
     print(f"- {position_log}")
     print(f"- {decision_log}")
-    print(f"- {world_log}")
+    print(f"- {world_db} (world memory SQLite path)")
     return 0
 
 

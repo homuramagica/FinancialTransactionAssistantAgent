@@ -127,6 +127,8 @@ TAG_ALIASES: dict[str, str] = {
     "data_centers": "data_centers",
     "foreign_flow": "foreign_flows",
     "foreign_flows": "foreign_flows",
+    "tariffs": "tariff",
+    "tariff": "tariff",
     "section122": "section_122",
     "section_122": "section_122",
 }
@@ -154,6 +156,68 @@ DISPLAY_LABELS: dict[str, str] = {
     "uk": "UK",
     "us": "US",
 }
+ROUTER_GENERIC_TAGS = {
+    "duration",
+    "fx",
+    "geopolitics",
+    "inflation",
+    "korea",
+    "policy",
+    "rates",
+    "trade",
+    "us",
+    "volatility",
+}
+ROUTER_GENERIC_INDUSTRIES = {
+    "capital_markets",
+    "manufacturing",
+    "public_finance",
+}
+ROUTER_GENERIC_TICKERS = {
+    "^KS11",
+    "^TNX",
+    "ASHR",
+    "BZ=F",
+    "CL=F",
+    "DXY",
+    "DX-Y.NYB",
+    "EEM",
+    "EPI",
+    "ETF",
+    "EUFN",
+    "EWJ",
+    "EWU",
+    "EWY",
+    "EWA",
+    "EXI",
+    "FXE",
+    "FXI",
+    "GLD",
+    "HYG",
+    "IEF",
+    "INDA",
+    "ITA",
+    "KARS",
+    "KRE",
+    "KWEB",
+    "LQD",
+    "MCHI",
+    "QQQ",
+    "RSX",
+    "SHY",
+    "SOXX",
+    "SPY",
+    "TLT",
+    "TTF=F",
+    "USO",
+    "VGK",
+    "XLE",
+    "XLI",
+    "XLU",
+    "XLY",
+    "ZIM",
+}
+LEGACY_METADATA_CUTOFF = dt.date(2026, 3, 1)
 STORY_RELATION_LABELS: dict[str, str] = {
     "evolves_from": "evolves from",
     "branches_from": "branches from",
@@ -602,10 +666,16 @@ def _normalize_industries_for_storage(value: Any) -> list[str]:
 
 def _auto_dedupe_key(payload: dict[str, Any]) -> str:
     entry_mode = _normalize_entry_mode(str(payload.get("entry_mode", "issue")))
-    if entry_mode != "brief":
-        return ""
+    parts: list[str] = [
+        entry_mode,
+        str(payload.get("date", "")).strip(),
+        str(payload.get("category", "")).strip(),
+        str(payload.get("region", "")).strip(),
+    ]
+    story_token = _slug_token(str(payload.get("story", "")).strip() or str(payload.get("story_family", "")).strip())
+    if story_token:
+        parts.append(story_token[:48])
 
-    parts: list[str] = [entry_mode, str(payload.get("date", "")).strip()]
     event_kind = str(payload.get("event_kind", "")).strip()
     if event_kind:
         parts.append(event_kind)
@@ -622,6 +692,10 @@ def _auto_dedupe_key(payload: dict[str, Any]) -> str:
     if industries:
         parts.append("-".join(industries[:2]))
 
+    tickers = [_slug_token(str(item)) for item in payload.get("tickers", []) if str(item).strip()]
+    if tickers:
+        parts.append("-".join(tickers[:3]))
+
     title = _slug_token(str(payload.get("title", "")))
     if title:
         parts.append(title[:80])
@@ -633,6 +707,567 @@ def _auto_dedupe_key(payload: dict[str, Any]) -> str:
         return material
     digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:12]
     return f"{material[:160]}__{digest}"
+
+
+def _canonical_story_family_label(value: str) -> str:
+    label = _normalize_story_label(value)
+    if not label:
+        return ""
+    if " - " in label:
+        label = label.split(" - ", 1)[0].strip()
+    family_aliases = {
+        "AI 인프라 병목": "AI 투자 레짐",
+        "중동 에너지 충격": "중동 리스크와 에너지 가격",
+    }
+    label = family_aliases.get(label, label)
+    return label
+
+
+def _payload_subject_names(payload: dict[str, Any]) -> list[str]:
+    return [
+        _normalize_subject_name(str(item.get("name", "")))
+        for item in payload.get("subjects", [])
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    ]
+
+
+def _payload_text_blob(payload: dict[str, Any]) -> str:
+    parts: list[str] = [
+        str(payload.get("title", "")),
+        str(payload.get("summary", "")),
+        str(payload.get("story", "")),
+        str(payload.get("story_family", "")),
+        str(payload.get("event_kind", "")),
+    ]
+    parts.extend(str(tag) for tag in payload.get("tags", []) if str(tag).strip())
+    parts.extend(str(industry) for industry in payload.get("industries", []) if str(industry).strip())
+    parts.extend(str(ticker) for ticker in payload.get("tickers", []) if str(ticker).strip())
+    parts.extend(_payload_subject_names(payload))
+    return " ".join(part for part in parts if part).casefold()
+
+
+def _text_has_any(text: str, patterns: tuple[str, ...] | list[str]) -> bool:
+    for pattern in patterns:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def _merge_subjects(existing: Any, inferred: list[dict[str, str]]) -> list[dict[str, str]]:
+    return _normalize_subjects_for_storage(list(existing or []) + inferred)
+
+
+def _merge_tokens(existing: Any, inferred: list[str], *, kind: str) -> list[str]:
+    items = list(existing or []) + inferred
+    if kind == "industry":
+        return _normalize_industries_for_storage(items)
+    if kind == "tag":
+        return _normalize_tags_for_storage(items)
+    raise ValueError(f"unsupported token merge kind: {kind}")
+
+
+def _infer_subjects_from_text(payload: dict[str, Any]) -> list[dict[str, str]]:
+    text = _payload_text_blob(payload)
+    rules = (
+        ("Federal Reserve", "institution", (r"\bfederal reserve\b", r"\bfed\b", r"연준")),
+        ("European Central Bank", "institution", (r"\beuropean central bank\b", r"\becb\b")),
+        ("Bank of Korea", "institution", (r"\bbank of korea\b", r"\bbok\b", r"한국은행", r"\b한은\b")),
+        ("Bank of England", "institution", (r"\bbank of england\b", r"\bboe\b")),
+        ("Reserve Bank of Australia", "institution", (r"\breserve bank of australia\b", r"\brba\b")),
+        ("U.S. Treasury", "institution", (r"\bu\.?s\.? treasury\b", r"\btreasury\b", r"미 재무부")),
+        ("U.S. Department of Energy", "institution", (r"\bdepartment of energy\b", r"\bdoe\b", r"미 에너지부")),
+        ("USTR", "institution", (r"\bustr\b", r"u\.?s\.? trade representative")),
+        ("U.S. Central Command", "institution", (r"\bu\.?s\.? central command\b", r"\bcentcom\b")),
+        ("International Energy Agency", "institution", (r"\binternational energy agency\b", r"\biea\b")),
+        ("Eurostat", "institution", (r"\beurostat\b",)),
+        ("U.S. Bureau of Labor Statistics", "institution", (r"\bbureau of labor statistics\b", r"\bbls\b")),
+        ("Statistics Canada", "institution", (r"\bstatistics canada\b",)),
+        ("Iranian Government", "institution", (r"\biran(?:ian)?\b", r"이란")),
+        ("Israeli Government", "institution", (r"\bisrael(?:i)?\b", r"이스라엘")),
+        ("Qatari Government", "institution", (r"\bqatar(?:i)?\b", r"카타르")),
+        ("Boeing", "company", (r"\bboeing\b",)),
+        ("Airbus", "company", (r"\bairbus\b",)),
+        ("Amazon", "company", (r"\bamazon\b",)),
+        ("OpenAI", "company", (r"\bopenai\b",)),
+        ("FedEx", "company", (r"\bfedex\b",)),
+    )
+
+    inferred: list[dict[str, str]] = []
+    for name, subject_type, patterns in rules:
+        if _text_has_any(text, patterns):
+            inferred.append({"name": name, "type": subject_type})
+    return _normalize_subjects_for_storage(inferred)
+
+
+def _infer_industries_from_payload(payload: dict[str, Any]) -> list[str]:
+    text = _payload_text_blob(payload)
+    tags = set(_normalize_tags_for_storage(payload.get("tags", [])))
+    tickers = {str(item).upper() for item in payload.get("tickers", []) if str(item).strip()}
+
+    inferred: list[str] = []
+    if (
+        tags & {"oil", "middle_east", "spr", "iea", "energy"}
+        or tickers & {"CL=F", "BZ=F", "USO", "XLE"}
+        or _text_has_any(text, (r"\boil\b", r"\bbrent\b", r"\bwti\b", r"\bcrude\b", r"\brefiner"))
+    ):
+        inferred.extend(["energy", "oil"])
+    if (
+        tags & {"natural_gas"}
+        or tickers & {"TTF=F"}
+        or _text_has_any(text, (r"natural gas", r"\blng\b", r"gas field"))
+    ):
+        inferred.extend(["energy", "natural_gas"])
+    if (
+        tags & {"shipping", "red_sea", "hormuz"}
+        or tickers & {"ZIM"}
+        or _text_has_any(text, (r"\bshipping\b", r"\bfreight\b", r"\btanker\b", r"\bport\b", r"\bcontainer"))
+    ):
+        inferred.extend(["shipping", "logistics"])
+    if (
+        tags & {"rates", "treasury", "duration", "refunding", "auction", "buyback"}
+        or tickers & {"TLT", "IEF", "SHY", "LQD", "HYG", "^TNX"}
+        or _text_has_any(text, (r"\btreasury\b", r"\bbond\b", r"\byield", r"\bauction\b", r"\bbuyback\b", r"\brefunding\b"))
+    ):
+        inferred.append("capital_markets")
+    if (
+        tags & {"treasury", "refunding", "auction"}
+        or _text_has_any(text, (r"\bu\.?s\.? treasury\b", r"\bsovereign\b", r"\bfiscal\b", r"\bgovernment bond"))
+    ):
+        inferred.append("public_finance")
+    if (
+        tags & {"banking", "kyc", "aml"}
+        or _text_has_any(text, (r"\bbank(?:s|ing)?\b", r"\bkyc\b", r"\baml\b", r"\bdeposit\b", r"\blender\b", r"\bcapital requirement"))
+    ):
+        inferred.append("banking")
+    if (
+        tags & {"housing", "mortgage"}
+        or _text_has_any(text, (r"\bhousing\b", r"\bmortgage\b", r"\brealtor\b", r"\bhome sales\b", r"\bhomebuilder\b"))
+    ):
+        inferred.extend(["housing", "residential_real_estate"])
+    if tags & {"ai", "data_centers"} or _text_has_any(text, (r"\bai\b", r"artificial intelligence", r"data center")):
+        inferred.append("artificial_intelligence")
+    if tags & {"software"} or _text_has_any(text, (r"\bsoftware\b", r"\bsaas\b")):
+        inferred.append("software")
+    if tags & {"internet"} or _text_has_any(text, (r"\binternet\b", r"\be-commerce\b", r"\bplatform\b")):
+        inferred.append("internet")
+    if tags & {"semiconductors"} or _text_has_any(text, (r"\bsemiconductor", r"\bchip\b", r"\bgpu\b")):
+        inferred.append("semiconductors")
+    if tags & {"defense"} or _text_has_any(text, (r"\bdefen[cs]e\b", r"\bmissile\b", r"\bweapon\b")):
+        inferred.append("defense")
+    if tags & {"aerospace"} or _text_has_any(text, (r"\baerospace\b", r"\bboeing\b", r"\bairbus\b", r"\baircraft\b", r"\bjet\b")):
+        inferred.extend(["aerospace", "manufacturing"])
+    if tags & {"supply_chain"} or _text_has_any(text, (r"supply chain", r"\bdelivery\b", r"\bshipment\b", r"\bfactory\b", r"\bproduction\b")):
+        inferred.extend(["manufacturing", "logistics"])
+    if tags & {"utilities", "power", "electricity"} or _text_has_any(text, (r"\butilit(?:y|ies)\b", r"power grid", r"\belectricity\b", r"\bpower demand\b")):
+        inferred.append("utilities")
+    if (
+        tags & {"asset_management", "private_credit", "foreign_flows", "valuation"}
+        or _text_has_any(text, (r"asset manager", r"private credit", r"\betf\b", r"\bfund flow", r"\bvaluation\b", r"\bipo\b"))
+    ):
+        inferred.append("asset_management")
+    if _text_has_any(text, (r"\blabor\b", r"\bemployment\b", r"\bjobs\b", r"\bwages?\b", r"\bunemployment\b")):
+        inferred.append("labor")
+    return _normalize_industries_for_storage(list(payload.get("industries", [])) + inferred)
+
+
+def _infer_event_kind_from_payload(payload: dict[str, Any]) -> str:
+    existing = _normalize_event_kind(str(payload.get("event_kind", "")))
+    if existing:
+        return existing
+
+    text = _payload_text_blob(payload)
+    tags = set(_normalize_tags_for_storage(payload.get("tags", [])))
+    title = str(payload.get("title", "")).casefold()
+
+    if _looks_like_earnings_payload(payload):
+        return "earnings_review"
+    if tags & {"regulation", "kyc", "aml"} or _text_has_any(text, (r"\bregulat", r"\bantitrust\b", r"\blitigation\b", r"\blawsuit\b", r"\binvestigation\b", r"\bsettlement\b")):
+        return "regulation"
+    if tags & {"supply_chain", "shipping"} or _text_has_any(text, (r"supply chain", r"\bdelivery\b", r"\bshipment\b", r"\blogistics\b", r"\bshipping\b")):
+        return "supply_chain"
+    if tags & {"treasury", "refunding", "auction", "buyback", "valuation"} or _text_has_any(text, (r"\bauction\b", r"\brefunding\b", r"\bbuyback\b", r"\bspread\b", r"\byield\b", r"\bissuance\b")):
+        return "capital_markets"
+    if _text_has_any(text, (r"\bcpi\b", r"\bpce\b", r"\bpayroll", r"\bjobs\b", r"\bgdp\b", r"\bretail sales\b", r"\bpmi\b", r"\bunemployment\b")):
+        return "macro_data"
+    if _text_has_any(title, (r"\brate (cut|hike|hold|decision)\b", r"\bfed\b", r"\becb\b", r"\brba\b", r"\bbok\b", r"\bboe\b")):
+        return "policy_signal"
+    if _text_has_any(text, (r"\bwar\b", r"\bmilitary\b", r"\bstrike\b", r"\battack\b", r"\bmissile\b", r"\bretaliation\b", r"전쟁", r"공격", r"폭격", r"미사일")):
+        return "policy_signal"
+    if _text_has_any(text, (r"\bipo\b", r"\bm&a\b", r"\bacquisition\b", r"\bmerger\b", r"\bcapex\b", r"\binvestment\b", r"\bexpansion\b", r"\bproduction\b")):
+        return "industry_trend"
+    return ""
+
+
+def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | None:
+    text = _payload_text_blob(payload)
+    tags = set(_normalize_tags_for_storage(payload.get("tags", [])))
+    industries = set(_normalize_industries_for_storage(payload.get("industries", [])))
+    tickers = {str(item).upper() for item in payload.get("tickers", []) if str(item).strip()}
+    subjects = {name.casefold() for name in _payload_subject_names(payload)}
+    region = _normalize_region(str(payload.get("region", "GLOBAL")))
+    event_kind = _normalize_event_kind(str(payload.get("event_kind", "")))
+
+    military_signal = _text_has_any(
+        text,
+        (
+            r"\bwar\b",
+            r"\bmilitary\b",
+            r"\bstrike\b",
+            r"\battack\b",
+            r"\bmissile\b",
+            r"\bdrone\b",
+            r"\bairstrike\b",
+            r"\bbombing\b",
+            r"\bretaliation\b",
+            r"전쟁",
+            r"공격",
+            r"폭격",
+            r"미사일",
+            r"보복",
+        ),
+    )
+    middle_east_signal = bool(
+        tags & {"middle_east", "hormuz", "red_sea"}
+        or subjects
+        & {
+            "iranian government",
+            "israeli government",
+            "u.s. central command",
+            "qatari government",
+        }
+        or _text_has_any(text, (r"\biran\b", r"\bisrael\b", r"\bgulf\b", r"\bhormuz\b", r"\bqatar\b", r"중동", r"이란", r"이스라엘", r"호르무즈"))
+    )
+    energy_signal = bool(
+        tags & {"oil", "natural_gas", "shipping", "spr", "iea", "energy"}
+        or industries & {"energy", "oil", "natural_gas", "shipping"}
+    )
+    tariff_signal = bool(
+        tags & {"tariff", "section_301", "section_122", "trade", "transshipment"}
+        or _text_has_any(text, (r"\btariff", r"section 301", r"section 122", r"\btrade\b", r"관세", r"무역", r"\bustr\b"))
+    )
+    treasury_signal = bool(
+        tags & {"treasury", "refunding", "auction", "buyback", "term_premium", "duration"}
+        or tickers & {"TLT", "IEF", "^TNX", "SHY"}
+        or _text_has_any(text, (r"\btreasury\b", r"\brefunding\b", r"\bauction\b", r"\bbuyback\b", r"\bduration\b"))
+    )
+    korea_macro_signal = bool(
+        region == "KR"
+        or tags & {"korea", "krw", "ndf", "bok"}
+        or tickers & {"EWY", "^KS11", "KRW=X", "USDKRW=X", "KR10Y"}
+        or _text_has_any(text, (r"\bkorea\b", r"\bwon\b", r"\bndf\b", r"\bbank of korea\b", r"한국", r"원화", r"한은", r"한국은행"))
+    )
+    advanced_rates_signal = bool(
+        tags & {"fed", "ecb", "boe", "rba", "global_policy"}
+        or _text_has_any(
+            text,
+            (
+                r"\bfed\b",
+                r"\becb\b",
+                r"\bboe\b",
+                r"\brba\b",
+                r"\bfederal reserve\b",
+                r"\beuropean central bank\b",
+                r"\bbank of england\b",
+                r"\breserve bank of australia\b",
+            ),
+        )
+    )
+    ai_signal = bool(
+        tags & {"ai", "data_centers", "semiconductors", "software", "capex"}
+        or industries & {"artificial_intelligence", "software", "internet", "semiconductors", "utilities"}
+        or _text_has_any(text, (r"\bai\b", r"artificial intelligence", r"data center", r"\bchip\b", r"\bsoftware\b"))
+    )
+    power_signal = bool(
+        tags & {"data_centers", "capex"}
+        or industries & {"utilities", "energy", "energy_infrastructure"}
+        or _text_has_any(text, (r"power grid", r"\belectricity\b", r"\butilit(?:y|ies)\b", r"power demand"))
+    )
+
+    if military_signal and middle_east_signal:
+        return {
+            "story": "미-이란 전쟁",
+            "story_family": "중동 군사충돌",
+            "story_thesis": "군사작전 자체가 시장의 1차 변수인 구간으로, 에너지와 해운 이슈와는 별도 축에서 추적해야 한다.",
+            "story_checkpoint": "직접 타격 강도 완화, 휴전 합의, 미군·이란 간 교전 축소가 확인되면 군사충돌 스토리 강도는 낮아진다.",
+        }
+    if middle_east_signal and energy_signal:
+        return {
+            "story": "중동 리스크와 에너지 가격",
+            "story_family": "중동 리스크와 에너지 가격",
+            "story_thesis": "중동발 군사·외교 변수는 유가 자체보다 공급망·해운·보험 비용을 통해 재반복형 가격 프리미엄을 만든다.",
+            "story_checkpoint": "호르무즈·홍해 물류 차질 완화와 비축유/증산 버퍼 확대가 함께 확인되면 에너지 리스크 프리미엄은 약해진다.",
+        }
+    if tariff_signal:
+        return {
+            "story": "미국 관세 체제 재편",
+            "story_family": "미국 관세 체제 재편",
+            "story_thesis": "미국 무역정책은 일회성 발표보다 상시 조사·집행 체제로 이동하며 교역 프리미엄을 다시 재가격하고 있다.",
+            "story_checkpoint": "법원 제동, 예외 확대, 협상 타결로 관세 집행 강도가 낮아지면 스토리 강도는 완화된다.",
+        }
+    if treasury_signal and not korea_macro_signal:
+        return {
+            "story": "재무부 공급·바이백 조합",
+            "story_family": "재무부 공급·바이백 조합",
+            "story_thesis": "미 국채 공급 일정과 바이백 정책 조합이 장기금리와 듀레이션 민감 자산의 변동성을 좌우한다.",
+            "story_checkpoint": "입찰 수요 안정, 공급 축소, 바이백 확대가 동시에 확인되면 공급발 금리 상방 압력은 낮아진다.",
+        }
+    if korea_macro_signal and (tags & {"fx", "rates", "ndf", "krw", "bok"} or event_kind in {"macro_data", "capital_markets", "policy_signal"}):
+        return {
+            "story": "한국 금리·환율 변동성",
+            "story_family": "한국 금리·환율 변동성",
+            "story_thesis": "한국 자산은 대외 리스크와 국내 금리 경로가 겹칠 때 원화와 채권 변동성이 함께 확대되는 경향이 있다.",
+            "story_checkpoint": "원화 안정, 외국인 수급 개선, 한은 메시지 완화가 함께 확인되면 변동성 스토리는 약해진다.",
+        }
+    if advanced_rates_signal and not korea_macro_signal:
+        return {
+            "story": "선진국 금리 인하 지연",
+            "story_family": "선진국 금리 인하 지연",
+            "story_thesis": "물가와 에너지 리스크가 남아 있는 한 선진국 중앙은행의 동시 완화 기대는 반복적으로 후퇴할 수 있다.",
+            "story_checkpoint": "핵심 물가 둔화와 성장 냉각이 함께 확인되면 인하 지연 스토리는 약해진다.",
+        }
+    if ai_signal and power_signal:
+        return {
+            "story": "데이터센터 수요 → 전력 병목",
+            "story_family": "AI 투자 레짐",
+            "story_thesis": "AI 투자 확대의 병목은 연산보다 전력·유틸리티 인프라 조달에서 발생하고 있다.",
+            "story_checkpoint": "전력 인허가, 유틸리티 CAPEX, 장기 공급계약이 원활히 풀리면 병목 스토리는 완화된다.",
+        }
+    if ai_signal:
+        return {
+            "story": "AI 투자 레짐",
+            "story_family": "AI 투자 레짐",
+            "story_thesis": "AI 관련 자본지출과 밸류에이션 재평가가 기술주와 인프라 수요를 함께 흔드는 핵심 축이다.",
+            "story_checkpoint": "CAPEX 둔화와 수요 검증 실패가 확인되면 AI 투자 스토리는 약해진다.",
+        }
+    return None
+
+
+def _build_story_router_catalog(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT payload_json FROM world_issue_entries WHERE entry_mode = 'issue' ORDER BY as_of DESC, logged_at DESC"
+    ).fetchall()
+    catalog: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        try:
+            normalized = _normalize_payload_for_storage(payload)
+        except ValueError:
+            continue
+        story_label = str(normalized.get("story", "")).strip()
+        if not story_label:
+            continue
+        story_key = str(normalized.get("story_key", "")).strip() or _normalize_story_key(story_label)
+        bucket = catalog.get(story_key)
+        if bucket is None:
+            bucket = {
+                "story": story_label,
+                "story_key": story_key,
+                "story_family": str(normalized.get("story_family", "")).strip() or story_label,
+                "story_family_key": str(normalized.get("story_family_key", "")).strip() or story_key,
+                "story_thesis": str(normalized.get("story_thesis", "")).strip(),
+                "story_checkpoint": str(normalized.get("story_checkpoint", "")).strip(),
+                "event_count": 0,
+                "latest_as_of": "",
+                "tags": set(),
+                "industries": set(),
+                "tickers": set(),
+                "subjects": set(),
+                "event_kinds": set(),
+            }
+            catalog[story_key] = bucket
+        bucket["event_count"] += 1
+        bucket["tags"].update(str(item).strip() for item in normalized.get("tags", []) if str(item).strip())
+        bucket["industries"].update(str(item).strip() for item in normalized.get("industries", []) if str(item).strip())
+        bucket["tickers"].update(str(item).strip().upper() for item in normalized.get("tickers", []) if str(item).strip())
+        bucket["subjects"].update(name.casefold() for name in _payload_subject_names(normalized))
+        if str(normalized.get("event_kind", "")).strip():
+            bucket["event_kinds"].add(str(normalized.get("event_kind", "")).strip())
+        as_of = str(normalized.get("as_of", ""))
+        if as_of >= str(bucket.get("latest_as_of", "")):
+            bucket["latest_as_of"] = as_of
+            if str(normalized.get("story_thesis", "")).strip():
+                bucket["story_thesis"] = str(normalized.get("story_thesis", "")).strip()
+            if str(normalized.get("story_checkpoint", "")).strip():
+                bucket["story_checkpoint"] = str(normalized.get("story_checkpoint", "")).strip()
+    return list(catalog.values())
+
+
+def _route_story_from_catalog(payload: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, str] | None:
+    payload_tags = set(_normalize_tags_for_storage(payload.get("tags", [])))
+    payload_industries = set(_normalize_industries_for_storage(payload.get("industries", [])))
+    payload_tickers = {str(item).strip().upper() for item in payload.get("tickers", []) if str(item).strip()}
+    payload_subjects = {name.casefold() for name in _payload_subject_names(payload)}
+    payload_event_kind = _normalize_event_kind(str(payload.get("event_kind", "")))
+
+    best_score = 0.0
+    best_anchor = 0
+    best: dict[str, Any] | None = None
+    for candidate in catalog:
+        if int(candidate.get("event_count", 0)) < 2:
+            continue
+
+        tag_overlap = payload_tags & set(candidate.get("tags", set()))
+        industry_overlap = payload_industries & set(candidate.get("industries", set()))
+        ticker_overlap = payload_tickers & set(candidate.get("tickers", set()))
+        subject_overlap = payload_subjects & set(candidate.get("subjects", set()))
+        event_match = bool(payload_event_kind and payload_event_kind in set(candidate.get("event_kinds", set())))
+        semantic_tag_overlap = {tag for tag in tag_overlap if tag not in ROUTER_GENERIC_TAGS}
+        semantic_industry_overlap = {
+            industry for industry in industry_overlap if industry not in ROUTER_GENERIC_INDUSTRIES
+        }
+        semantic_ticker_overlap = {ticker for ticker in ticker_overlap if ticker not in ROUTER_GENERIC_TICKERS}
+
+        score = 0.0
+        score += sum(0.5 if tag in ROUTER_GENERIC_TAGS else 2.0 for tag in tag_overlap)
+        score += sum(1.0 if industry in ROUTER_GENERIC_INDUSTRIES else 3.0 for industry in industry_overlap)
+        score += sum(0.5 if ticker in ROUTER_GENERIC_TICKERS else 2.0 for ticker in ticker_overlap)
+        score += 3.0 * len(subject_overlap)
+        if event_match:
+            score += 1.5
+
+        strong_anchor_hits = len(semantic_ticker_overlap) + len(subject_overlap)
+        anchor_hits = strong_anchor_hits + len(semantic_tag_overlap) + len(semantic_industry_overlap)
+        if score < 4.5 or strong_anchor_hits == 0:
+            continue
+        key = (score, anchor_hits, int(candidate.get("event_count", 0)), str(candidate.get("latest_as_of", "")))
+        best_key = (
+            best_score,
+            best_anchor,
+            int(best.get("event_count", 0)) if best is not None else 0,
+            str(best.get("latest_as_of", "")) if best is not None else "",
+        )
+        if best is None or key > best_key:
+            best = candidate
+            best_score = score
+            best_anchor = anchor_hits
+
+    if best is None:
+        return None
+    return {
+        "story": str(best.get("story", "")).strip(),
+        "story_key": str(best.get("story_key", "")).strip(),
+        "story_family": str(best.get("story_family", "")).strip(),
+        "story_family_key": str(best.get("story_family_key", "")).strip(),
+        "story_thesis": str(best.get("story_thesis", "")).strip(),
+        "story_checkpoint": str(best.get("story_checkpoint", "")).strip(),
+    }
+
+
+def _is_legacy_issue_without_metadata(payload: dict[str, Any]) -> bool:
+    if _normalize_entry_mode(str(payload.get("entry_mode", "issue"))) != "issue":
+        return False
+    if str(payload.get("story", "")).strip() or str(payload.get("event_kind", "")).strip():
+        return False
+    if payload.get("subjects") or payload.get("industries"):
+        return False
+    issue_dt = _parse_datetime_safe(payload.get("date"))
+    if issue_dt is None:
+        return False
+    return issue_dt.date() < LEGACY_METADATA_CUTOFF
+
+
+def _enrich_world_issue_payload(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    story_catalog: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    working = dict(payload)
+
+    if not str(working.get("dedupe_key", "")).strip():
+        auto_key = _auto_dedupe_key(working)
+        if auto_key:
+            working["dedupe_key"] = auto_key
+
+    if _is_legacy_issue_without_metadata(working):
+        inferred_subjects = _infer_subjects_from_text(working)
+        if inferred_subjects:
+            working["subjects"] = _merge_subjects(working.get("subjects", []), inferred_subjects)
+        inferred_industries = _infer_industries_from_payload(working)
+        if inferred_industries:
+            working["industries"] = inferred_industries
+        inferred_event_kind = _infer_event_kind_from_payload(working)
+        if inferred_event_kind:
+            working["event_kind"] = inferred_event_kind
+    else:
+        if not working.get("industries"):
+            inferred_industries = _infer_industries_from_payload(working)
+            if inferred_industries:
+                working["industries"] = inferred_industries
+        if not str(working.get("event_kind", "")).strip():
+            inferred_event_kind = _infer_event_kind_from_payload(working)
+            if inferred_event_kind:
+                working["event_kind"] = inferred_event_kind
+
+    entry_mode = _normalize_entry_mode(str(working.get("entry_mode", "issue")))
+    story = str(working.get("story", "")).strip()
+    family = _canonical_story_family_label(str(working.get("story_family", "")).strip())
+    routed: dict[str, str] | None = None
+    routing_payload = dict(working)
+    if entry_mode == "brief":
+        for field in (
+            "story",
+            "story_key",
+            "story_family",
+            "story_family_key",
+            "story_thesis",
+            "story_checkpoint",
+        ):
+            routing_payload.pop(field, None)
+    if not story or entry_mode == "brief":
+        routed = _infer_story_metadata_by_rules(routing_payload)
+        if routed is None:
+            catalog = story_catalog if story_catalog is not None else _build_story_router_catalog(conn)
+            routed = _route_story_from_catalog(routing_payload, catalog)
+    if routed is not None:
+        routed_story = str(routed.get("story", "")).strip()
+        working["story"] = routed_story
+        working["story_key"] = str(routed.get("story_key", "")).strip() or _normalize_story_key(routed_story)
+        family = _canonical_story_family_label(
+            str(routed.get("story_family", "")).strip() or str(routed.get("story", "")).strip()
+        )
+        if family:
+            working["story_family"] = family
+            working["story_family_key"] = _normalize_story_family_key(family)
+        else:
+            working.pop("story_family", None)
+            working.pop("story_family_key", None)
+        if str(routed.get("story_thesis", "")).strip():
+            working["story_thesis"] = str(routed.get("story_thesis", "")).strip()
+        if str(routed.get("story_checkpoint", "")).strip():
+            working["story_checkpoint"] = str(routed.get("story_checkpoint", "")).strip()
+    elif story:
+        if entry_mode == "brief" and (
+            str(working.get("story_thesis", "")).strip() or str(working.get("story_checkpoint", "")).strip()
+        ):
+            for field in (
+                "story",
+                "story_key",
+                "story_family",
+                "story_family_key",
+                "story_thesis",
+                "story_checkpoint",
+            ):
+                working.pop(field, None)
+        elif family:
+            working["story_family"] = family
+            working["story_family_key"] = _normalize_story_family_key(family)
+        else:
+            working["story_family"] = story
+            working["story_family_key"] = _normalize_story_family_key(story)
+    elif family:
+        working["story_family"] = family
+        working["story_family_key"] = _normalize_story_family_key(family)
+    else:
+        working.pop("story_family", None)
+        working.pop("story_family_key", None)
+
+    return _normalize_payload_for_storage(working)
 
 
 def _normalize_state_status(value: str) -> str:
@@ -1038,6 +1673,15 @@ def _has_earnings_signal(*, event_kind: str, tags: list[str], title: str, summar
     return _contains_any_keyword(f"{title} {summary}", EARNINGS_TEXT_HINTS)
 
 
+def _looks_like_earnings_payload(payload: dict[str, Any]) -> bool:
+    return _has_earnings_signal(
+        event_kind=str(payload.get("event_kind", "")).strip(),
+        tags=_normalize_tags_for_storage(payload.get("tags", [])),
+        title=str(payload.get("title", "")).strip(),
+        summary=str(payload.get("summary", "")).strip(),
+    )
+
+
 def _apply_earnings_priority_rules(
     *,
     category: str,
@@ -1385,7 +2029,7 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
     event_kind = _normalize_event_kind(str(normalized.get("event_kind", "")))
     story = _normalize_story_label(str(normalized.get("story", "")))
     story_key_raw = _normalize_whitespace(str(normalized.get("story_key", "")))
-    story_family = _normalize_story_label(str(normalized.get("story_family", "")))
+    story_family = _canonical_story_family_label(str(normalized.get("story_family", "")))
     story_thesis = _normalize_whitespace(str(normalized.get("story_thesis", "")))
     story_checkpoint = _normalize_whitespace(str(normalized.get("story_checkpoint", "")))
     story_relation_raw = _normalize_whitespace(str(normalized.get("story_relation", "")))
@@ -1525,7 +2169,7 @@ def _normalize_payload_for_storage(raw_row: dict[str, Any]) -> dict[str, Any]:
         normalized["net_effect"] = net_effect
     if entry_mode == "brief" and not subjects and not industries and not event_kind:
         raise ValueError("brief entry requires at least one of subjects, industries, or event_kind")
-    if entry_mode == "brief" and "dedupe_key" not in normalized:
+    if "dedupe_key" not in normalized:
         auto_key = _auto_dedupe_key(normalized)
         if auto_key:
             normalized["dedupe_key"] = auto_key
@@ -2239,6 +2883,7 @@ def _cleanup_world_issue_entries(conn: sqlite3.Connection) -> tuple[int, int, in
         """
     ).fetchall()
 
+    story_catalog = _build_story_router_catalog(conn)
     scanned = 0
     updated = 0
     skipped = 0
@@ -2253,7 +2898,7 @@ def _cleanup_world_issue_entries(conn: sqlite3.Connection) -> tuple[int, int, in
             skipped += 1
             continue
         try:
-            normalized = _normalize_payload_for_storage(parsed)
+            normalized = _prepare_payload_for_storage(conn, parsed, story_catalog=story_catalog)
         except ValueError:
             skipped += 1
             continue
@@ -2265,6 +2910,175 @@ def _cleanup_world_issue_entries(conn: sqlite3.Connection) -> tuple[int, int, in
         _upsert_sqlite_payload(conn, normalized)
         updated += 1
     return scanned, updated, skipped
+
+
+def _audit_cleanup_candidate_count(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_id, as_of, issue_date, category, region, importance, entry_mode, dedupe_key,
+               logged_at, title, payload_json
+        FROM world_issue_entries
+        ORDER BY as_of ASC, logged_at ASC
+        """
+    ).fetchall()
+    story_catalog = _build_story_router_catalog(conn)
+    changed = 0
+    for row in rows:
+        try:
+            parsed = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            changed += 1
+            continue
+        if not isinstance(parsed, dict):
+            changed += 1
+            continue
+        try:
+            normalized = _prepare_payload_for_storage(conn, parsed, story_catalog=story_catalog)
+        except ValueError:
+            changed += 1
+            continue
+        normalized["event_id"] = str(row["event_id"])
+        if normalized != parsed or not _entry_row_matches_payload(row, normalized):
+            changed += 1
+    return changed
+
+
+def _build_audit_rows(conn: sqlite3.Connection, *, recent_days: int) -> list[dict[str, Any]]:
+    today = _kst_now().date()
+    recent_start = (today - dt.timedelta(days=max(1, recent_days) - 1)).isoformat()
+
+    def scalar(query: str, params: tuple[Any, ...] = ()) -> int:
+        row = conn.execute(query, params).fetchone()
+        if row is None:
+            return 0
+        value = row[0]
+        if value is None:
+            return 0
+        return int(value)
+
+    def pct(part: int, whole: int) -> str:
+        if whole <= 0:
+            return "0.0%"
+        return f"{round(part / whole * 100, 1):.1f}%"
+
+    total = scalar("SELECT COUNT(*) FROM world_issue_entries")
+    issue_total = scalar("SELECT COUNT(*) FROM world_issue_entries WHERE entry_mode = 'issue'")
+    brief_total = scalar("SELECT COUNT(*) FROM world_issue_entries WHERE entry_mode = 'brief'")
+    recent_total = scalar("SELECT COUNT(*) FROM world_issue_entries WHERE issue_date >= ?", (recent_start,))
+    overall_story = scalar(
+        "SELECT COUNT(*) FROM world_issue_entries WHERE COALESCE(TRIM(json_extract(payload_json, '$.story')), '') <> ''"
+    )
+    issue_story = scalar(
+        "SELECT COUNT(*) FROM world_issue_entries WHERE entry_mode = 'issue' AND COALESCE(TRIM(json_extract(payload_json, '$.story')), '') <> ''"
+    )
+    brief_story = scalar(
+        "SELECT COUNT(*) FROM world_issue_entries WHERE entry_mode = 'brief' AND COALESCE(TRIM(json_extract(payload_json, '$.story')), '') <> ''"
+    )
+    issue_dedupe = scalar(
+        "SELECT COUNT(*) FROM world_issue_entries WHERE entry_mode = 'issue' AND TRIM(COALESCE(dedupe_key, '')) <> ''"
+    )
+    brief_dedupe = scalar(
+        "SELECT COUNT(*) FROM world_issue_entries WHERE entry_mode = 'brief' AND TRIM(COALESCE(dedupe_key, '')) <> ''"
+    )
+    legacy_blank = scalar(
+        """
+        SELECT COUNT(*)
+        FROM world_issue_entries
+        WHERE entry_mode = 'issue'
+          AND issue_date < ?
+          AND COALESCE(TRIM(json_extract(payload_json, '$.story')), '') = ''
+          AND COALESCE(TRIM(json_extract(payload_json, '$.event_kind')), '') = ''
+          AND COALESCE(json_extract(payload_json, '$.subjects'), '[]') = '[]'
+          AND COALESCE(json_extract(payload_json, '$.industries'), '[]') = '[]'
+        """,
+        (LEGACY_METADATA_CUTOFF.isoformat(),),
+    )
+    orphan_briefs = scalar(
+        """
+        SELECT COUNT(*)
+        FROM world_issue_entries
+        WHERE entry_mode = 'brief'
+          AND COALESCE(TRIM(json_extract(payload_json, '$.story')), '') = ''
+          AND (
+                COALESCE(TRIM(json_extract(payload_json, '$.event_kind')), '') <> ''
+                OR COALESCE(json_extract(payload_json, '$.subjects'), '[]') <> '[]'
+                OR COALESCE(json_extract(payload_json, '$.industries'), '[]') <> '[]'
+          )
+        """
+    )
+    distinct_stories = scalar(
+        "SELECT COUNT(DISTINCT json_extract(payload_json, '$.story')) FROM world_issue_entries WHERE COALESCE(TRIM(json_extract(payload_json, '$.story')), '') <> ''"
+    )
+    oneoff_stories = scalar(
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT json_extract(payload_json, '$.story') AS story
+            FROM world_issue_entries
+            WHERE COALESCE(TRIM(json_extract(payload_json, '$.story')), '') <> ''
+            GROUP BY story
+            HAVING COUNT(*) = 1
+        )
+        """
+    )
+    distinct_families = scalar(
+        "SELECT COUNT(DISTINCT json_extract(payload_json, '$.story_family')) FROM world_issue_entries WHERE COALESCE(TRIM(json_extract(payload_json, '$.story_family')), '') <> ''"
+    )
+    oneoff_families = scalar(
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT json_extract(payload_json, '$.story_family') AS family
+            FROM world_issue_entries
+            WHERE COALESCE(TRIM(json_extract(payload_json, '$.story_family')), '') <> ''
+            GROUP BY family
+            HAVING COUNT(*) = 1
+        )
+        """
+    )
+    branchy_families = scalar(
+        """
+        SELECT COUNT(DISTINCT json_extract(payload_json, '$.story_family'))
+        FROM world_issue_entries
+        WHERE COALESCE(TRIM(json_extract(payload_json, '$.story_family')), '') <> ''
+          AND json_extract(payload_json, '$.story_family') LIKE '% - %'
+        """
+    )
+    story_links = scalar("SELECT COUNT(*) FROM world_issue_story_links")
+    family_suggestions = scalar(
+        "SELECT COUNT(*) FROM world_issue_story_family_suggestions WHERE status = 'suggested'"
+    )
+    active_states = scalar(
+        "SELECT COUNT(*) FROM world_issue_states WHERE state_status IN ('active', 'watch')"
+    )
+    cleanup_candidates = _audit_cleanup_candidate_count(conn)
+
+    return [
+        {"Section": "Volume", "Metric": "Total entries", "Value": total, "Detail": ""},
+        {"Section": "Volume", "Metric": f"Recent entries ({recent_days}d)", "Value": recent_total, "Detail": f"since {recent_start}"},
+        {"Section": "Volume", "Metric": "Issue entries", "Value": issue_total, "Detail": ""},
+        {"Section": "Volume", "Metric": "Brief entries", "Value": brief_total, "Detail": ""},
+        {"Section": "Coverage", "Metric": "Story fill rate", "Value": pct(overall_story, total), "Detail": f"{overall_story}/{total}"},
+        {"Section": "Coverage", "Metric": "Issue story fill rate", "Value": pct(issue_story, issue_total), "Detail": f"{issue_story}/{issue_total}"},
+        {"Section": "Coverage", "Metric": "Brief story fill rate", "Value": pct(brief_story, brief_total), "Detail": f"{brief_story}/{brief_total}"},
+        {"Section": "Coverage", "Metric": "Issue dedupe fill rate", "Value": pct(issue_dedupe, issue_total), "Detail": f"{issue_dedupe}/{issue_total}"},
+        {"Section": "Coverage", "Metric": "Brief dedupe fill rate", "Value": pct(brief_dedupe, brief_total), "Detail": f"{brief_dedupe}/{brief_total}"},
+        {"Section": "Coverage", "Metric": "Legacy blank issues", "Value": legacy_blank, "Detail": f"issue_date < {LEGACY_METADATA_CUTOFF.isoformat()}"},
+        {"Section": "Coverage", "Metric": "Orphan briefs with metadata", "Value": orphan_briefs, "Detail": "brief + metadata but no story"},
+        {"Section": "Graph", "Metric": "Distinct stories", "Value": distinct_stories, "Detail": ""},
+        {"Section": "Graph", "Metric": "One-off stories", "Value": oneoff_stories, "Detail": ""},
+        {"Section": "Graph", "Metric": "Distinct families", "Value": distinct_families, "Detail": ""},
+        {"Section": "Graph", "Metric": "One-off families", "Value": oneoff_families, "Detail": ""},
+        {"Section": "Graph", "Metric": "Branchy family labels", "Value": branchy_families, "Detail": "family label contains ' - '"},
+        {"Section": "Graph", "Metric": "Story links", "Value": story_links, "Detail": ""},
+        {"Section": "Graph", "Metric": "Suggested family splits", "Value": family_suggestions, "Detail": ""},
+        {"Section": "State", "Metric": "Active/watch states", "Value": active_states, "Detail": ""},
+        {"Section": "Maintenance", "Metric": "Cleanup candidates", "Value": cleanup_candidates, "Detail": "rows that would change after normalize/backfill/router"},
+    ]
+
+
+def _audit_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    return pd.DataFrame(rows)
 
 
 def _build_story_link_payload(
@@ -2282,6 +3096,8 @@ def _build_story_link_payload(
     confidence: float,
 ) -> dict[str, Any]:
     now = _kst_now().isoformat()
+    canonical_family_label = _canonical_story_family_label(story_family_label) or _canonical_story_family_label(story_label)
+    canonical_family_key = _normalize_story_family_key(canonical_family_label or story_family_key or story_key)
     return {
         "link_id": str(uuid.uuid4()),
         "story_key": story_key,
@@ -2289,8 +3105,8 @@ def _build_story_link_payload(
         "related_story_key": related_story_key,
         "related_story_label": related_story_label,
         "relation_type": relation_type,
-        "story_family_key": story_family_key,
-        "story_family_label": story_family_label,
+        "story_family_key": canonical_family_key,
+        "story_family_label": canonical_family_label or story_label,
         "source_event_id": source_event_id,
         "source_kind": source_kind,
         "note": note,
@@ -2434,8 +3250,8 @@ def _story_family_choices_from_links(conn: sqlite3.Connection) -> dict[str, dict
             bucket["family_label"] = family_label or str(bucket.get("family_label", ""))
 
     for row in rows:
-        family_key = str(row["story_family_key"])
-        family_label = str(row["story_family_label"])
+        family_label = _canonical_story_family_label(str(row["story_family_label"]))
+        family_key = _normalize_story_family_key(family_label or str(row["story_family_key"]))
         updated_at = str(row["updated_at"])
         add_vote(str(row["story_key"]), family_key, family_label, updated_at)
         add_vote(str(row["related_story_key"]), family_key, family_label, updated_at)
@@ -2510,6 +3326,14 @@ def _backfill_story_families(conn: sqlite3.Connection) -> tuple[int, int]:
         desired_family_label = str(family.get("story_family_label", "")).strip() or story_label
         current_family_key = str(normalized.get("story_family_key", "")).strip()
         current_family_label = str(normalized.get("story_family", "")).strip()
+        current_family_canonical = _canonical_story_family_label(current_family_label)
+        placeholder_family = (
+            not current_family_label
+            or current_family_canonical == story_label
+            or current_family_key in {"", story_key}
+        )
+        if current_family_label and not placeholder_family and current_family_canonical != desired_family_label:
+            continue
         if current_family_key == desired_family_key and current_family_label == desired_family_label:
             continue
 
@@ -2986,7 +3810,7 @@ def _refresh_story_family_split_suggestions(
             "distinguishing_signals": distinguishing,
             **extra_payload,
         }
-        suggestion_key = (family_key, member_keys)
+        suggestion_key = (family_key, proposed_key, source_kind, "suggested")
         existing = suggestions.get(suggestion_key)
         if existing and existing["confidence"] >= confidence:
             return
@@ -3879,17 +4703,31 @@ def _find_existing_event_by_dedupe_key(
     return dict(row)
 
 
+def _prepare_payload_for_storage(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    story_catalog: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    normalized = _normalize_payload_for_storage(payload)
+    return _enrich_world_issue_payload(conn, normalized, story_catalog=story_catalog)
+
+
 def _save_payload_without_manual_state(
     *,
     db_path: Path,
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    normalized_payload = _normalize_payload_for_storage(payload)
     with _connect_db(db_path) as conn:
         _init_db(conn)
+        story_catalog = _build_story_router_catalog(conn)
+        normalized_payload = _prepare_payload_for_storage(conn, payload, story_catalog=story_catalog)
         _upsert_sqlite_payload(conn, normalized_payload)
         state_payload = _upsert_derived_state_for_issue(conn, normalized_payload)
+        story_link_payload = _upsert_story_link_for_issue(conn, normalized_payload)
         _upsert_taxonomy_for_payload(conn, normalized_payload)
+        if story_link_payload is not None:
+            _upsert_taxonomy_for_story_link(conn, story_link_payload)
         conn.commit()
 
     print(f"Upserted SQLite world issue: {db_path}")
@@ -3999,13 +4837,13 @@ def _handle_add(args: argparse.Namespace) -> int:
         dedupe_key=_normalize_dedupe_key(args.dedupe_key or ""),
     )
 
-    if args.dry_run:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0
-
-    normalized_payload = _normalize_payload_for_storage(payload)
     with _connect_db(db_path) as conn:
         _init_db(conn)
+        story_catalog = _build_story_router_catalog(conn)
+        normalized_payload = _prepare_payload_for_storage(conn, payload, story_catalog=story_catalog)
+        if args.dry_run:
+            print(json.dumps(normalized_payload, ensure_ascii=False, indent=2))
+            return 0
         if getattr(args, "skip_if_duplicate", False):
             existing = _find_existing_event_by_dedupe_key(
                 conn,
@@ -4125,13 +4963,13 @@ def _handle_brief_add(args: argparse.Namespace) -> int:
         dedupe_key=_normalize_dedupe_key(args.dedupe_key or ""),
     )
 
-    if args.dry_run:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0
-
-    normalized_payload = _normalize_payload_for_storage(payload)
     with _connect_db(db_path) as conn:
         _init_db(conn)
+        story_catalog = _build_story_router_catalog(conn)
+        normalized_payload = _prepare_payload_for_storage(conn, payload, story_catalog=story_catalog)
+        if args.dry_run:
+            print(json.dumps(normalized_payload, ensure_ascii=False, indent=2))
+            return 0
         if args.skip_if_duplicate:
             existing = _find_existing_event_by_dedupe_key(
                 conn,
@@ -4157,28 +4995,29 @@ def _handle_brief_import(args: argparse.Namespace) -> int:
     import_path = Path(args.from_file).expanduser()
     rows = _read_import_payloads(import_path)
 
-    prepared: list[dict[str, Any]] = []
-    for raw in rows:
-        merged = dict(raw)
-        merged.setdefault("category", args.category)
-        merged.setdefault("region", args.region)
-        merged.setdefault("importance", args.importance)
-        merged.setdefault("horizon", args.horizon)
-        merged["entry_mode"] = "brief"
-        merged["derive_state"] = False
-        normalized = _normalize_payload_for_storage(merged)
-        if not normalized.get("sources"):
-            raise SystemExit("brief-import rows require sources[]")
-        prepared.append(normalized)
-
-    if args.dry_run:
-        print(json.dumps(prepared, ensure_ascii=False, indent=2))
-        return 0
-
-    inserted = 0
-    skipped = 0
     with _connect_db(db_path) as conn:
         _init_db(conn)
+        story_catalog = _build_story_router_catalog(conn)
+        prepared: list[dict[str, Any]] = []
+        for raw in rows:
+            merged = dict(raw)
+            merged.setdefault("category", args.category)
+            merged.setdefault("region", args.region)
+            merged.setdefault("importance", args.importance)
+            merged.setdefault("horizon", args.horizon)
+            merged["entry_mode"] = "brief"
+            merged["derive_state"] = False
+            normalized = _prepare_payload_for_storage(conn, merged, story_catalog=story_catalog)
+            if not normalized.get("sources"):
+                raise SystemExit("brief-import rows require sources[]")
+            prepared.append(normalized)
+
+        if args.dry_run:
+            print(json.dumps(prepared, ensure_ascii=False, indent=2))
+            return 0
+
+        inserted = 0
+        skipped = 0
         for payload in prepared:
             if args.skip_if_duplicate:
                 existing = _find_existing_event_by_dedupe_key(
@@ -4251,6 +5090,25 @@ def _handle_taxonomy(args: argparse.Namespace) -> int:
 
     df = _taxonomy_rows_to_frame(rows)
     _emit_dataframe(df, args.format, args.out)
+    return 0
+
+
+def _handle_audit(args: argparse.Namespace) -> int:
+    db_path = _ensure_db(args.base_dir, args.db_file)
+    with _connect_db(db_path) as conn:
+        _init_db(conn)
+        rows = _build_audit_rows(conn, recent_days=max(1, int(args.days)))
+
+    if args.format == "json":
+        payload = {
+            "db_path": str(db_path),
+            "count": len(rows),
+            "rows": rows,
+        }
+        _emit_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", args.out)
+        return 0
+
+    _emit_dataframe(_audit_rows_to_frame(rows), args.format, args.out)
     return 0
 
 
@@ -4984,8 +5842,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_brief.add_argument("--sources-file", default=None, help="출처 JSON 파일 경로")
     p_brief.add_argument("--dry-run", action="store_true", help="저장 없이 payload 확인")
 
-    p_brief_import = sub.add_parser("brief-import", help="주체/산업 브리프 JSON/JSONL 배치 입력")
-    p_brief_import.add_argument("--from-file", required=True, help="입력 파일 경로 (.json/.jsonl)")
+    p_brief_import = sub.add_parser("brief-import", help="주체/산업 브리프 배치 입력 (자동화는 JSON 권장, JSONL은 레거시 호환)")
+    p_brief_import.add_argument(
+        "--from-file",
+        required=True,
+        help="입력 파일 경로 (.json 권장; .jsonl은 레거시 호환용, 저장은 항상 SQLite에 반영)",
+    )
     p_brief_import.add_argument("--category", choices=CATEGORY_CHOICES, default="emerging", help="기본 분류")
     p_brief_import.add_argument("--region", choices=REGION_CHOICES, default="GLOBAL", help="기본 지역")
     p_brief_import.add_argument("--importance", choices=IMPORTANCE_CHOICES, default="low", help="기본 중요도")
@@ -5048,6 +5910,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="SQLite 저장소를 기준으로 taxonomy 사용 횟수와 시각을 재계산",
     )
+
+    p_audit = sub.add_parser("audit", help="월드 메모리 품질/커버리지 진단")
+    p_audit.add_argument("--days", type=int, default=30, help="최근 진단 기준 기간(일)")
+    p_audit.add_argument("--format", choices=["md", "csv", "json", "pretty"], default="md", help="출력 포맷")
+    p_audit.add_argument("--out", default=None, help="출력 파일 경로")
 
     p_cleanup = sub.add_parser("cleanup", help="저장된 월드 메모리 payload와 taxonomy/state 인덱스를 정리")
     p_cleanup.add_argument(
@@ -5142,6 +6009,8 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_report(args)
     if args.cmd == "taxonomy":
         return _handle_taxonomy(args)
+    if args.cmd == "audit":
+        return _handle_audit(args)
     if args.cmd == "cleanup":
         return _handle_cleanup(args)
     if args.cmd == "story-link":

@@ -163,7 +163,7 @@ as of YYYY-MM-DD HH:MM KST
 ## 메타
 - 데이터 범위(KST): YYYY-MM-DD ~ YYYY-MM-DD
 - 최신 로그 시각(KST):
-- 원본 로그: `portfolio/world_issue_log.jsonl`
+- 원본 저장소: `portfolio/world_issue_log.sqlite3`
 
 ## 1) 주식/채권시장의 현재 주요 이슈
 ### 미국

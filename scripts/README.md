@@ -214,6 +214,8 @@ python3 scripts/counsel_memory_cli.py prepare-turn \
 - 기본 철학: raw article 전문보다 `summary`, `why_it_matters`, `portfolio_link`, `story`, `story_thesis`, `story_checkpoint`, `sources`, `tags`, `tickers` 중심의 summary-first memory
 - 2.5 계층: append-only issue log 위에 `world_issue_states`를 얹어, 현재 유효한 상태(`active/watch`)를 별도로 읽는다.
 - 엔트리 모드: `issue`(중기 이슈)와 `brief`(주체/산업 짧은 메모)
+- `issue`/`brief` 공통으로 `dedupe_key`가 비어 있으면 자동 생성된다.
+- `brief`와 메타데이터가 있는 `issue`는 저장 전에 story router가 기존 스토리/안정 패밀리에 자동 연결을 시도한다.
 - 기본 분류:
   - `category`: `stock_bond`, `geopolitics`, `emerging`
   - `region`: `US`, `KR`, `GLOBAL`
@@ -312,6 +314,18 @@ python3 scripts/world_memory_cli.py taxonomy --type subject --format pretty
 - 새로운 값은 기존 규격으로 의미를 담기 어려울 때만 추가한다.
 - 동의어 중복, 일회성 라벨, 과도한 세분화는 피한다.
 
+## 품질 진단 / 정리
+
+```bash
+python3 scripts/world_memory_cli.py audit --format md
+python3 scripts/world_memory_cli.py cleanup --dry-run
+python3 scripts/world_memory_cli.py cleanup
+```
+
+- `audit`: 스토리 채움률, dedupe 커버리지, 레거시 공백, orphan brief, cleanup 대상 수를 한 번에 점검한다.
+- `cleanup`: 정규화, 레거시 메타데이터 백필, story routing, story family 정리, taxonomy/state/story-link 재생성을 묶어 실행한다.
+- 운영 루틴은 보통 `audit -> cleanup --dry-run -> cleanup` 순서를 권장한다.
+
 ## 상태 스냅샷 조회 / 재구성
 
 ```bash
@@ -344,16 +358,19 @@ python3 scripts/world_memory_cli.py brief-add \
 - 단, 어닝 신호가 감지되면 기본값보다 높은 우선순위 규칙(자동 중요도 상향/카테고리 보정)이 적용된다.
 - 주체/산업/이벤트 중 최소 하나는 있어야 저장된다.
 - 기본 `dedupe_key`는 제목/주체/산업/날짜를 바탕으로 자동 생성된다.
+- 중동/관세/금리/AI 같은 대표 테마는 저장 시 안정적인 `story/story_family`로 자동 라우팅된다.
 
 ## 자동화용 브리프 배치 입력
 
 ```bash
 python3 scripts/world_memory_cli.py brief-import \
-  --from-file tmp/world_memory_briefs.jsonl \
+  --from-file tmp/world_memory_briefs.json \
   --skip-if-duplicate
 ```
 
 - 입력 파일은 `.json`, `.jsonl` 모두 지원한다.
+- 자동화와 예제는 `.json` 기준으로 사용한다. `.jsonl`은 레거시 호환용 입력 포맷일 뿐이다.
+- 저장소는 항상 `portfolio/world_issue_log.sqlite3`인 SQLite다.
 - 각 row는 최소한 `title`, `summary`, `sources[]`를 가져야 한다.
 - `entry_mode`는 자동으로 `brief`, `derive_state`는 자동으로 `false`로 강제된다.
 

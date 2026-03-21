@@ -39,7 +39,8 @@
 - 사용 예시는 `scripts/README.md` 참고
 
 ## 외부 세계 메모리(시장 동향 로그)
-속보와 분리된 중기 템포의 시장/정치 이슈를 `portfolio/world_issue_log.sqlite3`(기본 저장소)에 누적하고, 필요 시 `world_issue_log.jsonl` 미러와 함께 운영할 수 있다.
+속보와 분리된 중기 템포의 시장/정치 이슈를 `portfolio/world_issue_log.sqlite3`(기본 저장소)에 누적한다.
+자동화와 예제는 JSON 입력을 기준으로 사용한다. JSONL은 레거시 호환용 입력 포맷일 뿐이며, 저장소 기준은 항상 SQLite다.
 
 - 실행: `python3 scripts/world_memory_cli.py --help`
 - 기본 철학: raw article 전문보다 요약형 이슈 메모(`summary`, `story`, `sources`, `portfolio_link`)를 우선 저장
