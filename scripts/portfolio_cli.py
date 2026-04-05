@@ -1221,6 +1221,19 @@ def _save_stats_table_png(stats_df: pd.DataFrame, out_path: Path, *, title: str)
     plt.close(fig)
 
 
+def _configure_matplotlib_font(plt: Any) -> None:
+    import matplotlib.font_manager as fm
+
+    for font_name in ["AppleGothic", "NanumGothic", "Malgun Gothic", "Noto Sans CJK KR"]:
+        try:
+            fm.findfont(font_name, fallback_to_default=False)
+            plt.rcParams["font.family"] = font_name
+            plt.rcParams["axes.unicode_minus"] = False
+            break
+        except Exception:
+            continue
+
+
 def _handle_chart(args: argparse.Namespace) -> int:
     try:
         import matplotlib.dates as mdates
@@ -1231,6 +1244,8 @@ def _handle_chart(args: argparse.Namespace) -> int:
             "설치 후 다시 실행해 주세요: "
             "uv pip install --python .venv/bin/python -r requirements.txt"
         ) from e
+
+    _configure_matplotlib_font(plt)
 
     base, position_log, _ = _ensure_logs(args.base_dir)
     events = _read_jsonl(position_log)
@@ -1261,24 +1276,39 @@ def _handle_chart(args: argparse.Namespace) -> int:
     if curve.empty:
         raise SystemExit("No chart data available")
 
+    display_start_date = args.display_start or start_date
+    if display_start_date < start_date:
+        display_start_date = start_date
+    if display_start_date > end_date:
+        raise SystemExit("Invalid display range: display start date is after chart end date")
+
+    display_curve = curve[curve.index >= pd.Timestamp(display_start_date)].copy()
+    if display_curve.empty:
+        raise SystemExit("No chart data available in the requested display range")
+
     fig, ax = plt.subplots(figsize=(args.width, args.height), dpi=args.dpi)
     lines: dict[str, Any] = {}
-    for col in curve.columns:
-        lw = 2.2 if col == "Portfolio" else 0.9
-        (line,) = ax.plot(curve.index, curve[col] * 100.0, label=col, linewidth=lw)
+    for col in display_curve.columns:
+        lw = 2.4 if col == "Portfolio" else 0.7
+        (line,) = ax.plot(display_curve.index, display_curve[col] * 100.0, label=col, linewidth=lw)
         lines[col] = line
 
     ax.axhline(0.0, color="#999999", linewidth=1.0, linestyle="--")
     ax.set_ylabel("Cumulative Return (%)")
     ax.set_xlabel("Date")
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.75)
-    title = args.title or f"Portfolio Cumulative Return ({start_date} ~ {end_date})"
+    if args.title:
+        title = args.title
+    elif display_start_date > start_date:
+        title = f"Portfolio Cumulative Return (NAV base: {start_date}, view: {display_start_date} ~ {end_date})"
+    else:
+        title = f"Portfolio Cumulative Return ({start_date} ~ {end_date})"
     ax.set_title(title)
 
     # 가독성을 위해 범례 대신 각 라인의 우측 끝에 자산명을 직접 라벨링한다.
     endpoints: list[dict[str, Any]] = []
-    for col in curve.columns:
-        raw_series = curve[col].astype(float).dropna()
+    for col in display_curve.columns:
+        raw_series = display_curve[col].astype(float).dropna()
         if raw_series.empty:
             continue
         last_cum_ret = float(raw_series.iloc[-1] * 100.0)
@@ -1325,7 +1355,7 @@ def _handle_chart(args: argparse.Namespace) -> int:
                 adjusted_y[idx] -= shift
 
         last_x = max(pd.to_datetime(e["x"]) for e in endpoints)
-        span_days = max(1, int((last_x - curve.index.min()).days))
+        span_days = max(1, int((last_x - display_curve.index.min()).days))
         x_pad_days = max(3, int(span_days * 0.08))
         label_x = last_x + pd.Timedelta(days=max(1, int(x_pad_days * 0.55)))
 
@@ -1336,8 +1366,9 @@ def _handle_chart(args: argparse.Namespace) -> int:
             color = str(point["color"])
             name = str(point["name"])
             daily_ret = float(point.get("daily_return", 0.0))
-            ax.plot([x0, label_x], [y0, y1], color=color, linewidth=0.9, alpha=0.7, linestyle=":")
-            label_txt = f"{name} {y0:.2f}% ({daily_ret:+.2f}%)"
+            guide_lw = 1.0 if name == "Portfolio" else 0.7
+            ax.plot([x0, label_x], [y0, y1], color=color, linewidth=guide_lw, alpha=0.7, linestyle=":")
+            label_txt = f"{name} ({daily_ret:.2f}%) | {y0:.2f}%"
             ax.text(
                 label_x,
                 y1,
@@ -1354,7 +1385,7 @@ def _handle_chart(args: argparse.Namespace) -> int:
         y_text_max = max(adjusted_y.values())
 
         # 라벨 끝점뿐 아니라 전체 시계열의 고저점까지 포함해 축 잘림을 방지한다.
-        curve_pct = curve.astype(float) * 100.0
+        curve_pct = display_curve.astype(float) * 100.0
         curve_min = float(curve_pct.min(numeric_only=True).min())
         curve_max = float(curve_pct.max(numeric_only=True).max())
         y_all_min = min(curve_min, y_text_min)
@@ -1364,7 +1395,7 @@ def _handle_chart(args: argparse.Namespace) -> int:
         pad_ratio = min(0.22, 0.1 + 0.01 * len(endpoints))
         y_pad = max(min_gap * 1.25, (y_all_max - y_all_min) * pad_ratio, 1.0)
         ax.set_ylim(y_all_min - y_pad, y_all_max + y_pad)
-        ax.set_xlim(curve.index.min(), last_x + pd.Timedelta(days=x_pad_days))
+        ax.set_xlim(display_curve.index.min(), last_x + pd.Timedelta(days=x_pad_days))
 
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
@@ -1378,7 +1409,7 @@ def _handle_chart(args: argparse.Namespace) -> int:
     if args.csv_out:
         csv_out = Path(args.csv_out)
         csv_out.parent.mkdir(parents=True, exist_ok=True)
-        csv_df = curve.copy()
+        csv_df = display_curve.copy()
         csv_df.insert(0, "Date", csv_df.index.date)
         csv_df.to_csv(csv_out, index=False)
         print(f"Saved chart series csv: {csv_out}")
@@ -1522,6 +1553,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chart = sub.add_parser("chart", help="누적수익률 차트(PNG) 저장")
     p_chart.add_argument("--start", type=_parse_date, required=False, default=None, help="시작일 (YYYY-MM-DD)")
     p_chart.add_argument("--end", type=_parse_date, default=None, help="종료일 (YYYY-MM-DD, 기본: 오늘 KST)")
+    p_chart.add_argument(
+        "--display-start",
+        type=_parse_date,
+        default=None,
+        help="차트 표시 시작일 (YYYY-MM-DD). 수익률 기준 시점은 --start를 유지하고, 화면 표시 구간만 잘라낸다.",
+    )
     p_chart.add_argument(
         "--method",
         choices=["auto", "nav", "transactions"],

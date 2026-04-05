@@ -30,6 +30,7 @@ reports/
 # Local runtime logs/databases
 portfolio/*.jsonl
 portfolio/*.sqlite3
+portfolio/*.sqlite3-*
 portfolio/counsel_sessions/
 **/decision_log.jsonl
 **/position_log.jsonl
