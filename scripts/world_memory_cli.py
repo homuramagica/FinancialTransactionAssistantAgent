@@ -227,6 +227,7 @@ STORY_RELATION_LABELS: dict[str, str] = {
     "same_family": "same family",
 }
 REPORT_PRESET_CHOICES = ["default", "recent_industry_trends"]
+MIN_DERIVED_STATE_ISSUE_SUPPORT = 2
 INDUSTRY_REPORT_EVENT_KINDS = {
     "industry_trend",
     "capital_markets",
@@ -945,10 +946,47 @@ def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | 
         tags & {"tariff", "section_301", "section_122", "trade", "transshipment"}
         or _text_has_any(text, (r"\btariff", r"section 301", r"section 122", r"\btrade\b", r"관세", r"무역", r"\bustr\b"))
     )
+    us_treasury_actor_signal = bool(
+        subjects
+        & {
+            "u.s. treasury",
+            "u.s. treasury market",
+            "u.s. department of the treasury",
+        }
+        or _text_has_any(
+            text,
+            (
+                r"\bu\.s\. treasury\b",
+                r"\btreasury department\b",
+                r"\bdepartment of the treasury\b",
+                r"\bquarterly refunding\b",
+                r"\btreasury buyback\b",
+            ),
+        )
+    )
+    treasury_market_signal = bool(
+        tags & {"treasury", "refunding", "buyback", "bills"}
+        or _text_has_any(
+            text,
+            (
+                r"\brefunding\b",
+                r"\bbuyback\b",
+                r"\btreasury bills?\b",
+                r"\bbill auction\b",
+                r"\bcoupon auction\b",
+            ),
+        )
+    )
     treasury_signal = bool(
-        tags & {"treasury", "refunding", "auction", "buyback", "term_premium", "duration"}
-        or tickers & {"TLT", "IEF", "^TNX", "SHY"}
-        or _text_has_any(text, (r"\btreasury\b", r"\brefunding\b", r"\bauction\b", r"\bbuyback\b", r"\bduration\b"))
+        us_treasury_actor_signal
+        or (
+            treasury_market_signal
+            and (
+                region == "US"
+                or tags & {"us", "treasury"}
+                or _text_has_any(text, (r"\bunited states\b", r"\bu\.s\.\b", r"\bwashington\b"))
+            )
+        )
     )
     korea_macro_signal = bool(
         region == "KR"
@@ -970,6 +1008,48 @@ def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | 
                 r"\bbank of england\b",
                 r"\breserve bank of australia\b",
             ),
+        )
+    )
+    global_rates_fx_signal = bool(
+        not korea_macro_signal
+        and not treasury_signal
+        and (
+            tags & {"rates", "fx", "bonds", "auction", "duration", "volatility", "jgb", "boj", "rbi", "rbnz"}
+            or _text_has_any(
+                text,
+                (
+                    r"\bcentral bank\b",
+                    r"\bbond market\b",
+                    r"\bsovereign\b",
+                    r"\bcurrency\b",
+                    r"\byields?\b",
+                    r"\bboj\b",
+                    r"\brbi\b",
+                    r"\brbnz\b",
+                ),
+            )
+        )
+        and (
+            industries & {"public_finance", "capital_markets", "banking"}
+            or event_kind in {"policy_signal", "macro_data", "capital_markets"}
+        )
+        and (
+            bool(subjects)
+            or tickers & {"EWJ", "VGK", "EUFN", "EMB", "EEM", "FXE", "USDJPY=X", "NZDUSD=X"}
+            or _text_has_any(
+                text,
+                (
+                    r"\bjapan\b",
+                    r"\bnew zealand\b",
+                    r"\bindia\b",
+                    r"\bbangladesh\b",
+                    r"\bpoland\b",
+                    r"\bindonesia\b",
+                    r"\bthailand\b",
+                    r"\beurozone\b",
+                    r"\beurope\b",
+                ),
+            )
         )
     )
     ai_signal = bool(
@@ -1024,6 +1104,13 @@ def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | 
             "story_family": "선진국 금리 인하 지연",
             "story_thesis": "물가와 에너지 리스크가 남아 있는 한 선진국 중앙은행의 동시 완화 기대는 반복적으로 후퇴할 수 있다.",
             "story_checkpoint": "핵심 물가 둔화와 성장 냉각이 함께 확인되면 인하 지연 스토리는 약해진다.",
+        }
+    if global_rates_fx_signal:
+        return {
+            "story": "글로벌 금리·FX 방어",
+            "story_family": "글로벌 금리·FX 방어",
+            "story_thesis": "비미국 금리·환율 변수는 각국 중앙은행의 방어 모드와 채권 수급 변화가 겹칠 때 개별 시장 스트레스로 번진다.",
+            "story_checkpoint": "현지 통화 안정과 입찰 수요 회복, 중앙은행의 완화적 가이던스가 함께 확인되면 방어 스토리는 약해진다.",
         }
     if ai_signal and power_signal:
         return {
@@ -2718,7 +2805,62 @@ def _state_key_from_issue(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _build_derived_state_payload_from_issue(payload: dict[str, Any]) -> dict[str, Any] | None:
+def _issue_story_support_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT payload_json FROM world_issue_entries WHERE entry_mode = 'issue' ORDER BY as_of ASC, logged_at ASC"
+    ).fetchall()
+    counts: dict[str, int] = {}
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        try:
+            normalized = _normalize_payload_for_storage(payload)
+        except ValueError:
+            continue
+        story_label = str(normalized.get("story", "")).strip()
+        if not story_label:
+            continue
+        story_key = str(normalized.get("story_key", "")).strip() or _normalize_story_key(story_label)
+        if not story_key:
+            continue
+        counts[story_key] = counts.get(story_key, 0) + 1
+    return counts
+
+
+def _should_materialize_derived_state(
+    payload: dict[str, Any],
+    *,
+    story_support_counts: dict[str, int] | None = None,
+) -> bool:
+    if not _coerce_bool(payload.get("derive_state"), default=True):
+        return False
+    explicit_state_key = str(payload.get("state_key", "")).strip()
+    if explicit_state_key:
+        return True
+
+    story_label = str(payload.get("story", "")).strip()
+    if not story_label:
+        return False
+    story_key = str(payload.get("story_key", "")).strip() or _normalize_story_key(story_label)
+    if not story_key:
+        return False
+    support_count = 0
+    if story_support_counts is not None:
+        support_count = int(story_support_counts.get(story_key, 0))
+    return support_count >= MIN_DERIVED_STATE_ISSUE_SUPPORT
+
+
+def _build_derived_state_payload_from_issue(
+    payload: dict[str, Any],
+    *,
+    story_support_counts: dict[str, int] | None = None,
+) -> dict[str, Any] | None:
+    if not _should_materialize_derived_state(payload, story_support_counts=story_support_counts):
+        return None
     state_key = _state_key_from_issue(payload)
     if not state_key:
         return None
@@ -2757,7 +2899,11 @@ def _upsert_derived_state_for_issue(
     conn: sqlite3.Connection,
     payload: dict[str, Any],
 ) -> dict[str, Any] | None:
-    state_payload = _build_derived_state_payload_from_issue(payload)
+    story_support_counts = _issue_story_support_counts(conn)
+    state_payload = _build_derived_state_payload_from_issue(
+        payload,
+        story_support_counts=story_support_counts,
+    )
     if state_payload is None:
         return None
 
@@ -2803,6 +2949,7 @@ def _sync_derived_states(conn: sqlite3.Connection, *, replace_existing: bool) ->
     if replace_existing:
         conn.execute("DELETE FROM world_issue_states WHERE source_kind = 'derived'")
 
+    story_support_counts = _issue_story_support_counts(conn)
     rows = conn.execute("SELECT payload_json FROM world_issue_entries ORDER BY as_of ASC, logged_at ASC").fetchall()
     latest_by_key: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -2816,7 +2963,13 @@ def _sync_derived_states(conn: sqlite3.Connection, *, replace_existing: bool) ->
             normalized = _normalize_payload_for_storage(payload)
         except ValueError:
             continue
-        state_key = _state_key_from_issue(normalized)
+        state_payload = _build_derived_state_payload_from_issue(
+            normalized,
+            story_support_counts=story_support_counts,
+        )
+        if state_payload is None:
+            continue
+        state_key = str(state_payload.get("state_key", "")).strip()
         if not state_key:
             continue
         latest_by_key[state_key] = normalized
@@ -2837,7 +2990,10 @@ def _sync_derived_states(conn: sqlite3.Connection, *, replace_existing: bool) ->
             skipped_manual += 1
             continue
 
-        state_payload = _build_derived_state_payload_from_issue(payload)
+        state_payload = _build_derived_state_payload_from_issue(
+            payload,
+            story_support_counts=story_support_counts,
+        )
         if state_payload is None:
             continue
         _insert_sqlite_state(conn, state_payload)
@@ -3116,6 +3272,16 @@ def _build_story_link_payload(
     }
 
 
+def _normalize_story_link_family_fields(payload: dict[str, Any]) -> tuple[str, str]:
+    family_label = _canonical_story_family_label(str(payload.get("story_family_label", ""))) or _canonical_story_family_label(
+        str(payload.get("story_label", ""))
+    )
+    family_key = _normalize_story_family_key(
+        family_label or str(payload.get("story_family_key", "")).strip() or str(payload.get("story_key", "")).strip()
+    )
+    return family_label or str(payload.get("story_label", "")).strip(), family_key
+
+
 def _insert_story_link(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     persisted = dict(payload)
     persisted["payload_json"] = json.dumps(payload, ensure_ascii=False)
@@ -3196,6 +3362,67 @@ def _upsert_story_link_for_issue(conn: sqlite3.Connection, payload: dict[str, An
         return None
     _insert_story_link(conn, story_link)
     return story_link
+
+
+def _normalize_story_links(conn: sqlite3.Connection) -> int:
+    rows = conn.execute("SELECT * FROM world_issue_story_links ORDER BY updated_at DESC, created_at DESC").fetchall()
+    updated = 0
+    for row in rows:
+        current = dict(row)
+        try:
+            stored = json.loads(str(current.get("payload_json", "{}")))
+        except json.JSONDecodeError:
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+
+        merged = dict(current)
+        merged.update(stored)
+        family_label, family_key = _normalize_story_link_family_fields(merged)
+        if (
+            family_label == str(current.get("story_family_label", "")).strip()
+            and family_key == str(current.get("story_family_key", "")).strip()
+        ):
+            continue
+
+        merged["story_family_label"] = family_label
+        merged["story_family_key"] = family_key
+        merged["updated_at"] = _kst_now().isoformat()
+        payload_json = json.dumps(
+            {
+                "link_id": str(merged.get("link_id", "")),
+                "story_key": str(merged.get("story_key", "")),
+                "story_label": str(merged.get("story_label", "")),
+                "related_story_key": str(merged.get("related_story_key", "")),
+                "related_story_label": str(merged.get("related_story_label", "")),
+                "relation_type": str(merged.get("relation_type", "")),
+                "story_family_key": str(merged.get("story_family_key", "")),
+                "story_family_label": str(merged.get("story_family_label", "")),
+                "source_event_id": str(merged.get("source_event_id", "")),
+                "source_kind": str(merged.get("source_kind", "")),
+                "note": str(merged.get("note", "")),
+                "confidence": float(merged.get("confidence", 0.55)),
+                "created_at": str(merged.get("created_at", "")),
+                "updated_at": str(merged.get("updated_at", "")),
+            },
+            ensure_ascii=False,
+        )
+        conn.execute(
+            """
+            UPDATE world_issue_story_links
+            SET story_family_key = ?, story_family_label = ?, updated_at = ?, payload_json = ?
+            WHERE link_id = ?
+            """,
+            (
+                str(merged["story_family_key"]),
+                str(merged["story_family_label"]),
+                str(merged["updated_at"]),
+                payload_json,
+                str(merged.get("link_id", "")),
+            ),
+        )
+        updated += 1
+    return updated
 
 
 def _sync_story_links(conn: sqlite3.Connection, *, replace_existing: bool) -> int:
@@ -4168,6 +4395,9 @@ def _read_story_node_rows(
                     "latest_as_of": str(normalized.get("as_of", "")),
                     "latest_title": str(normalized.get("title", "")),
                     "latest_summary": str(normalized.get("summary", "")),
+                    "latest_issue_as_of": "",
+                    "latest_issue_title": "",
+                    "latest_issue_summary": "",
                 }
                 nodes[story_key] = row
             row["event_count"] += 1
@@ -4175,6 +4405,12 @@ def _read_story_node_rows(
                 row["latest_as_of"] = str(normalized.get("as_of", ""))
                 row["latest_title"] = str(normalized.get("title", ""))
                 row["latest_summary"] = str(normalized.get("summary", ""))
+            if str(normalized.get("entry_mode", "issue")).strip() == "issue" and str(normalized.get("as_of", "")) >= str(
+                row.get("latest_issue_as_of", "")
+            ):
+                row["latest_issue_as_of"] = str(normalized.get("as_of", ""))
+                row["latest_issue_title"] = str(normalized.get("title", ""))
+                row["latest_issue_summary"] = str(normalized.get("summary", ""))
 
         links = conn.execute(
             "SELECT story_key, related_story_key FROM world_issue_story_links"
@@ -4205,8 +4441,8 @@ def _story_node_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "Family": str(row.get("story_family_label", "")),
                 "Events": int(row.get("event_count", 0)),
                 "Links": int(row.get("link_count", 0)),
-                "Latest Issue": str(row.get("latest_title", "")),
-                "Summary": str(row.get("latest_summary", "")),
+                "Latest Issue": str(row.get("latest_issue_title", "")).strip() or str(row.get("latest_title", "")),
+                "Summary": str(row.get("latest_issue_summary", "")).strip() or str(row.get("latest_summary", "")),
             }
         )
     return pd.DataFrame(view_rows)
@@ -4993,6 +5229,8 @@ def _handle_brief_add(args: argparse.Namespace) -> int:
 def _handle_brief_import(args: argparse.Namespace) -> int:
     db_path = _ensure_db(args.base_dir, args.db_file)
     import_path = Path(args.from_file).expanduser()
+    if import_path.suffix.lower() == ".jsonl":
+        raise SystemExit("brief-import accepts .json only. Convert JSONL rows into a JSON array first.")
     rows = _read_import_payloads(import_path)
 
     with _connect_db(db_path) as conn:
@@ -5154,8 +5392,10 @@ def _handle_cleanup(args: argparse.Namespace) -> int:
         scanned, updated, skipped = _cleanup_world_issue_entries(conn)
         inserted, skipped_manual = _sync_derived_states(conn, replace_existing=True)
         story_links_upserted = _sync_story_links(conn, replace_existing=True)
+        normalized_story_links = _normalize_story_links(conn)
         family_scanned, family_updated = _backfill_story_families(conn)
         story_links_upserted = _sync_story_links(conn, replace_existing=True)
+        normalized_story_links += _normalize_story_links(conn)
         family_split_suggestions = _refresh_story_family_split_suggestions(conn, replace_existing=True)
         processed = _rebuild_taxonomy_index(conn)
         if args.dry_run:
@@ -5167,6 +5407,7 @@ def _handle_cleanup(args: argparse.Namespace) -> int:
     print(f"{mode}: scanned={scanned} updated={updated} skipped={skipped}")
     print(f"Derived states synced: inserted={inserted} skipped_manual={skipped_manual}")
     print(f"Story links synced: upserted={story_links_upserted}")
+    print(f"Story links normalized: updated={normalized_story_links}")
     print(f"Story families backfilled: scanned={family_scanned} updated={family_updated}")
     print(f"Story family split suggestions: suggested={family_split_suggestions}")
     print(f"Refreshed taxonomy index from {processed} world issue rows")
@@ -5183,8 +5424,9 @@ def _handle_story_link(args: argparse.Namespace) -> int:
 
     story_key = _normalize_story_key(args.story_key or story_label)
     related_story_key = _normalize_story_key(args.related_story_key or related_story_label)
-    family_label = _normalize_story_label(args.story_family or story_label)
-    family_key = _normalize_story_family_key(args.story_family or story_label)
+    raw_family_label = _normalize_story_label(args.story_family or story_label)
+    family_label = _canonical_story_family_label(raw_family_label or story_label)
+    family_key = _normalize_story_family_key(family_label or story_label)
     relation_type = _normalize_story_relation(args.relation)
     try:
         confidence = float(args.confidence)
@@ -5742,7 +5984,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--derive-state",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="story/state_key 기반 derived 상태 생성 여부 (기본: 켜짐)",
+        help="derived 상태 후보 생성 여부 (반복 story 또는 명시적 state_key에 한해 반영)",
     )
     p_add.add_argument("--dedupe-key", default="", help="자동화 중복 방지 키")
     p_add.add_argument(
@@ -5842,11 +6084,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_brief.add_argument("--sources-file", default=None, help="출처 JSON 파일 경로")
     p_brief.add_argument("--dry-run", action="store_true", help="저장 없이 payload 확인")
 
-    p_brief_import = sub.add_parser("brief-import", help="주체/산업 브리프 배치 입력 (자동화는 JSON 권장, JSONL은 레거시 호환)")
+    p_brief_import = sub.add_parser("brief-import", help="주체/산업 브리프 배치 입력 (자동화는 JSON만 사용)")
     p_brief_import.add_argument(
         "--from-file",
         required=True,
-        help="입력 파일 경로 (.json 권장; .jsonl은 레거시 호환용, 저장은 항상 SQLite에 반영)",
+        help="입력 파일 경로 (.json만 지원, 저장은 항상 SQLite에 반영)",
     )
     p_brief_import.add_argument("--category", choices=CATEGORY_CHOICES, default="emerging", help="기본 분류")
     p_brief_import.add_argument("--region", choices=REGION_CHOICES, default="GLOBAL", help="기본 지역")
@@ -5981,7 +6223,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_states.add_argument("--format", choices=["md", "csv", "json", "pretty"], default="md", help="출력 포맷")
     p_states.add_argument("--out", default=None, help="출력 파일 경로")
 
-    p_state_sync = sub.add_parser("state-sync", help="기존 이슈 로그에서 파생 상태 스냅샷 재구성")
+    p_state_sync = sub.add_parser("state-sync", help="기존 이슈 로그에서 반복 story/명시적 state_key 기반 파생 상태 재구성")
     p_state_sync.add_argument(
         "--keep-derived",
         action="store_true",

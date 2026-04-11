@@ -1,0 +1,21 @@
+- Last run summary: 2026-04-10 22:38 KST
+- Updated NewsCollector preference weighting in AGENTS.md and CLAUDE.md.
+- Added a new must-prioritize bucket for Korea-China-Japan trilateral news, especially diplomacy, trade, supply chains, industrial policy, security, summit statements, export controls, and tech cooperation.
+- Synced wording so the summary line now correctly says the four preferred categories.
+- Current run time: 2026-04-10 22:38:10 KST.
+- Last run summary: 2026-04-11 06:27 KST
+- Collected and published 7 Axios-style NewsUpdate articles covering Mythos cyber risk, US inflation and wage pressure, Gulf aluminum disruption, jet fuel shortages, manufacturing AI adoption, and US-Iran weekend talks.
+- Applied validated manifest to NewsUpdate and advanced .state.json to the latest Bloomberg, WSJ, and Barron's queue heads.
+- Current run time: 2026-04-11 06:27:28 KST.
+- Last run summary: 2026-04-11 08:05 KST
+- Reviewed NewsCollector queue and world-memory context for Axios-style run.
+- Selected six candidate articles spanning private credit, consumer sentiment, oil pricing, Taiwan, and Italy-Sinochem governance.
+- Chrome AppleScript automation failed for every article with Google Chrome (-1728), so original body collection could not proceed.
+- Wrote error report `NewsUpdate/ERROR-26-04-11 08-05.md` and advanced only `last_run_kst` while preserving source boundary URLs for retry.
+- Current run time: 2026-04-11 08:05:52 KST.
+- Last run summary: 2026-04-11 08:13 KST
+- Chrome automation recovered after relaunch plus diagnose warm-up.
+- Fetched original article bodies individually after batch mode stayed flaky.
+- Published 3 Axios-style NewsUpdate articles on Fed/private credit, record-low US consumer sentiment, and the spot-vs-futures oil price gap.
+- Updated NewsUpdate state so Bloomberg and Barron's boundaries advanced, while WSJ remained queued for a later pass.
+- Current run time: 2026-04-11 08:13:26 KST.

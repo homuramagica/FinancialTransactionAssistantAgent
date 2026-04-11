@@ -2,6 +2,11 @@
 
 이 프로젝트는 금융 정보 습득을 위해 기본적으로 **yfinance API**를 사용한다.
 
+## 문서 미러링 원칙
+- `AGENTS.md`와 `CLAUDE.md`는 항상 동일한 내용으로 유지한다.
+- 둘 중 하나를 수정할 때는 다른 파일에도 같은 변경을 즉시 반영해 미러링 상태를 유지한다.
+- 동기화가 어긋났다면 `CLAUDE.md`를 삭제한 뒤 최신 `AGENTS.md` 전체 내용을 복제해 재생성하는 것을 기본 복구 절차로 사용한다.
+
 ## GitHub 공유/커밋 원칙
 - 공식 원격 저장소: `https://github.com/homuramagica/FinancialTransactionAssistantAgent`
 - 기본 브랜치: `main`
@@ -54,6 +59,7 @@
   - `https://t.me/firstsquaw`
 - 정규 언론 FEED: `https://rss.app/feeds/_hc8HiU0HyBWHfWoM.csv`
 - 사용자가 뉴스 업데이트를 요청하면 `SKILLs/NewsRequest.md`를 참조한다.
+  - 단, `Axios`, `악시오스`, `Axios식`, `악시오스식` 표현이 함께 포함된 경우에만 아래 `뉴스 기사 수집·요약 원칙 (NewsCollector)`를 우선 적용한다.
 - 사용자가 시장의 현재 상황에 대 분석/리포트를 요청하면 `SKILLs/MarketAnalysis.md`를 참조한다.
 - 사용자가 거시경제 분한석/전망 보고서를 요청하면 `SKILLs/MacroEconomics.md`를 참조한다.
 - 사용자가 기업 실적(earnings)을 요청하면 `SKILLs/Earnings.md`를 참조한다.
@@ -88,6 +94,16 @@
   - 포트폴리오 내 종목 심층 확인은 기업분석의 고신뢰 소스 원칙을 준용한다.
   - FEED는 최신 변화 탐지용으로 기본 호출하되, 핵심 사실과 행동 제안은 고신뢰 웹 검색 및 공식 자료로 재검증한다.
   - 출력에서는 정량지표 외 행동편향/목표/라이프사이클 맥락을 반드시 포함한다.
+
+
+## 뉴스 기사 수집·요약 원칙 (NewsCollector)
+- 이 기능은 일반 최신정보 FEED와 분리된 **전용 수집 경로**로 작동한다.
+- 사용자의 요청문에 `Axios`, `악시오스`, `Axios식`, `악시오스식` 중 하나가 포함된 경우에만 이 기능을 발동한다.
+- 위 키워드가 없는 일반 뉴스 요청은 기본적으로 `SKILLs/NewsRequest.md` 또는 일반 뉴스/시장 분석 흐름으로 처리한다.
+- 이 기능이 발동한 경우 최신 정보 조회 원칙의 CSV 피드와 텔레그램 피드(통합 CSV, 텔레그램 원본 채널)는 조회하지 않는다.
+- 출력은 `/NewsUpdate/` 폴더를 사용하며, 일반 보고서처럼 `reports/`에 저장하지 않는다.
+- 기사 선별 기준, 사용자 취향 가중치, RSS 소스, 본문 수집 방식, 상태 파일, 저유량 시간대 처리, 오류 보고서 형식 등 **운영 상세는 `SKILLs/NewsCollector/SKILL.md`를 단일 기준(source of truth)으로 따른다.**
+- 이 문서에는 NewsCollector의 상위 정책만 유지하고, 세부 절차와 예시는 `SKILLs/NewsCollector/SKILL.md`에만 둔다.
 
 ## 군사 충돌/전쟁 이슈 분류 원칙
 - **카테고리 자동 지정**: 군사 충돌 키워드(war, military, strike, attack, missile, drone attack, airstrike, bombing, troops, retaliation, 전쟁, 공격, 폭격, 미사일, 피격, 파병, 증파 등)가 감지되면 `category=geopolitics`로 자동 분류한다.
@@ -139,6 +155,8 @@
   - `brief-import`를 사용할 때는 항상 `.json` 입력만 사용하고 `.jsonl`은 사용하지 않는다.
   - 현재 레짐의 상태 변화나 우세 해석 변화가 확인되면 `add`에 `--state-key`, `--state-label`, `--state-status`, `--state-bias`, `--net-effect`를 함께 사용한다.
   - 같은 `state_key`의 기존 `active/watch` 상태를 명확히 대체하는 경우 `--supersedes-active`를 사용한다.
+  - derived state는 모든 `story`에 대해 자동 생성하지 않는다. 기본적으로 동일 story가 `issue` 기준 2건 이상 누적되었거나, 명시적 `state_key`가 있을 때만 레짐 후보로 유지한다.
+  - `story_family`는 부모 family를 canonical하게 유지하고, branch 분화는 `story-link` 메모 또는 `story-family-review` 제안으로 별도 관리한다.
   - 트럼프 같은 단일 인물 헤드라인만 반복 저장하지 말고, 정책 주체, 기업, 산업 동향이 균형 있게 섞이도록 유지한다.
 - **월드메모리 보고서 모드**는 사용자가 `월드메모리 보고서`(또는 동등한 명시 표현)를 요청한 경우에만 발동한다.
   - 이 경우 `world_issue_log`를 우선 조회하고 부족분만 웹 검색으로 보강한다.
@@ -250,6 +268,8 @@ files = os.listdir(reports_dir)
 - 시장/섹터/거시/뉴스/실적/포트폴리오 상담 등 **분석형 답변은 마지막 섹션을 반드시 `결론`으로 마무리**한다.
   - 본문에서 정보를 충분히 제시한 뒤, 최종 행동 관점에서 핵심 판단(현재 레짐/핵심 리스크/우선 체크포인트)을 3~7줄로 요약한다.
 - 시장/섹터/거시/뉴스/실적/포트폴리오 상담 등 **보고서 작성 요청은 기본적으로 `reports/` 경로에 `.md` 파일로 생성**한다.
+  - **단, `SKILLs/NewsCollector/SKILL.md`를 통해 수집·요약된 뉴스 기사 파일은 예외이며, 반드시 `/NewsUpdate/` 폴더에 저장한다.**
+  - NewsCollector 결과물을 `reports/`에 저장하거나, 반대로 일반 보고서를 `/NewsUpdate/`에 저장해서는 안 된다.
   - 기본 응답은 파일 저장 경로, 핵심 요약, 필요 시 다음 액션만 짧게 안내한다.
   - 사용자가 명시적으로 원할 때만 일반 채팅 본문으로 장문 보고서를 직접 출력한다.
   - 다른 스킬/도구가 HTML, PNG, PDF 등 별도 산출물을 필수로 요구하는 경우에는 그 형식을 우선하되, 가능하면 함께 `.md` 요약본도 제공한다.

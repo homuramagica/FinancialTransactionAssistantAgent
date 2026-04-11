@@ -25,6 +25,134 @@ python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 12 --
 
 ---
 
+# RSS 목록 + 브라우저 본문 수집
+
+`scripts/safari_fetch.py`는
+- WSJ/Barron's 기사 목록: Dow Jones RSS CSV 1회 조회 후 동시 분기
+- Bloomberg 기사 목록: Bloomberg RSS CSV
+- 개별 기사 본문: Chrome DevTools remote debugging + 전용 Chrome 프로필
+를 사용한다.
+
+파일명은 호환성 때문에 유지하지만 브라우저 수집 경로는 DevTools 전용이다.
+
+## 기본 설정
+
+- 기본 브라우저는 `chrome`이다.
+- 이전 `safari` 설정이나 `NEWS_FETCH_BROWSER=safari` 값이 남아 있어도 내부적으로 `chrome`으로 정규화된다.
+- Python 패키지 `websockets`가 필요하다: `python3 -m pip install websockets`
+- 기본 DevTools 프로필 경로는 `tmp/chrome_devtools_profile`이며 `NEWS_FETCH_DEVTOOLS_PROFILE_PATH`로 바꿀 수 있다.
+- 기본 원격 디버깅 포트는 `9222`이며 `NEWS_FETCH_DEVTOOLS_PORT`로 바꿀 수 있다.
+- `safari_fetch.py`는 필요한 경우 `Google Chrome.app`를 DevTools 포트와 전용 프로필로 직접 띄운다.
+- 브라우저 자동화는 공용 파일 락(`/tmp/safari_fetch_browser.lock`)으로 직렬화된다.
+  동시에 여러 `safari_fetch.py` 프로세스를 띄워도 기사 본문 연결은 자동으로 한 건씩 순서대로 진행된다.
+  필요하면 `--lock-timeout 180`처럼 대기 시간을 늘릴 수 있다.
+
+## 빠른 진단
+
+```bash
+python3 scripts/safari_fetch.py --diagnose --browser chrome
+```
+
+- 이 진단은 `websockets` 패키지, Chrome DevTools 포트 연결, 전용 프로필 접근, 페이지 JavaScript 실행 여부를 한 번에 점검한다.
+
+## 세션 준비
+
+유료 기사 본문을 읽으려면 DevTools용 Chrome 프로필에 한 번 로그인해 두는 편이 좋다.
+
+```bash
+python3 scripts/safari_fetch.py https://www.wsj.com --session-setup
+```
+
+- 브라우저 창이 열리면 로그인/구독 인증을 완료한 뒤 Enter를 누른다.
+- 완료되면 `tmp/chrome_devtools_profile` 아래의 Chrome 프로필에 세션이 유지된다.
+- 이후 본문 수집은 이 로그인된 DevTools Chrome 세션의 새 탭에서 진행된다.
+
+## 링크 수집 예시
+
+```bash
+python3 scripts/safari_fetch.py ignored --links-only --source dow_jones
+python3 scripts/safari_fetch.py ignored --load-more --source bloomberg
+```
+
+- `--source dow_jones`는 Dow Jones RSS CSV를 한 번 읽어 WSJ와 Barron's 링크를 함께 반환한다.
+- 반환 JSON의 각 항목에는 `source=wsj|barrons`가 함께 포함된다.
+
+## 자동화에서만 실패할 때 체크할 것
+
+- `python3 -m pip install websockets`가 끝났는지 확인
+- `python3 scripts/safari_fetch.py --diagnose --browser chrome`가 통과하는지 확인
+- `--session-setup`으로 WSJ/Barron's/Bloomberg 로그인 상태를 DevTools Chrome 프로필에 한 번 준비해 두기
+- 다른 프로세스가 같은 수집 작업을 동시에 실행하고 있지 않은지 확인
+
+## NewsUpdate 하네스
+
+`scripts/news_update_harness.py`는 Axios식 기사 초안과 `.state.json` 갱신을 한 번에 검증하고,
+검증을 통과한 배치만 `/NewsUpdate/`에 원자적으로 반영한다.
+또한 기사 본문 수집을 `safari_fetch.py` subprocess로 감싸서,
+브라우저 세션 종료나 DevTools 연결 불안정 신호가 나오면 자동 진단 후 1회 더 복구 재시도할 수 있다.
+
+### 신규 기사 후보 큐 확인
+
+`.state.json` 경계를 기준으로 소스별 신규 기사 후보만 잘라서 보고 싶다면 아래 명령을 사용한다.
+
+```bash
+python3 scripts/news_update_queue.py --workspace . --format md
+```
+
+- Bloomberg → WSJ → Barron's 순서로 현재 RSS 창의 신규 후보를 보여준다.
+- 점수화나 키워드 랭킹은 하지 않고, `.state.json` 기준 경계만 잘라 준다.
+
+### manifest 검증
+
+```bash
+python3 scripts/news_update_harness.py validate-manifest --manifest /tmp/news_batch.json
+```
+
+- `articles[]`: `filename`, `content`
+- `errors[]`: `filename`, `content` (선택)
+- `state`: `last_run_kst`, `bloomberg`, `wsj`, `barrons`
+
+### manifest 반영
+
+```bash
+python3 scripts/news_update_harness.py apply-manifest --manifest /tmp/news_batch.json --workspace .
+```
+
+- 기사 본문은 기사 길이, Axios 전환구 형식, 리스트 밀도, 출처 링크, 금융 에이전트 표기를 검사한다.
+- 검증이 실패하면 기사 파일도, `.state.json`도 쓰지 않는다.
+
+### 이미 생성한 기사 빠른 검사
+
+```bash
+python3 scripts/news_update_harness.py validate-files \
+  --workspace . \
+  --files "26-04-10 20-08 예시 기사.md"
+```
+
+### 기사 본문 수집을 하네스로 감싸기
+
+```bash
+python3 scripts/news_update_harness.py fetch-article --url "https://www.wsj.com/articles/example"
+python3 scripts/news_update_harness.py fetch-batch \
+  --url "https://www.wsj.com/articles/example-1" \
+  --url "https://www.barrons.com/articles/example-2"
+```
+
+- `fetch-batch`는 URL별로 `safari_fetch.py` subprocess를 새로 실행한다.
+- 브라우저 연결 불안정 신호가 나오면 `--diagnose`를 자동 실행하고, 하네스 차원에서 1회 더 재시도한다.
+- 자동화에서는 Python 루프 안에서 `safari_fetch.py`를 직접 반복 호출하기보다 이 하네스를 우선 사용한다.
+
+### NewsUpdate 디렉터리 일괄 검사
+
+```bash
+python3 scripts/news_update_harness.py validate-dir --workspace . --glob "*.md" --limit 20
+```
+
+- 최근 20개 기사/오류 보고서를 한 번에 검사한다.
+- `--glob`으로 기사만(`26-*.md`) 또는 오류 보고서만(`ERROR-*.md`) 따로 볼 수 있다.
+
+---
+
 # 캘린더 도구
 
 이 프로젝트는 `yfinance.Calendars`를 사용해서 **어닝 캘린더 / 경제 이벤트 캘린더**를 조회하고, Markdown/CSV/JSON/ICS로 내보낼 수 있다.
@@ -216,6 +344,7 @@ python3 scripts/counsel_memory_cli.py prepare-turn \
 - 엔트리 모드: `issue`(중기 이슈)와 `brief`(주체/산업 짧은 메모)
 - `issue`/`brief` 공통으로 `dedupe_key`가 비어 있으면 자동 생성된다.
 - `brief`와 메타데이터가 있는 `issue`는 저장 전에 story router가 기존 스토리/안정 패밀리에 자동 연결을 시도한다.
+- `story_family`는 항상 **부모 family**를 canonical하게 저장하고, branch 분화는 `story-link` 메모/`story-family-review` 제안으로 분리해 본다.
 - 기본 분류:
   - `category`: `stock_bond`, `geopolitics`, `emerging`
   - `region`: `US`, `KR`, `GLOBAL`
@@ -323,7 +452,7 @@ python3 scripts/world_memory_cli.py cleanup
 ```
 
 - `audit`: 스토리 채움률, dedupe 커버리지, 레거시 공백, orphan brief, cleanup 대상 수를 한 번에 점검한다.
-- `cleanup`: 정규화, 레거시 메타데이터 백필, story routing, story family 정리, taxonomy/state/story-link 재생성을 묶어 실행한다.
+- `cleanup`: 정규화, 레거시 메타데이터 백필, story routing, canonical story family 정리, taxonomy/state/story-link 재생성을 묶어 실행한다.
 - 운영 루틴은 보통 `audit -> cleanup --dry-run -> cleanup` 순서를 권장한다.
 
 ## 상태 스냅샷 조회 / 재구성
@@ -335,8 +464,8 @@ python3 scripts/world_memory_cli.py state-sync
 ```
 
 - `states`: 현재/과거 상태 스냅샷 조회
-- `state-sync`: 기존 issue log에서 `story` 또는 `state_key`를 읽어 derived 상태를 재구성
-- 일반 `add`도 `story`가 있으면 derived 상태를 자동 갱신한다. `state-sync`는 백필/재구성용이다.
+- `state-sync`: 기존 issue log에서 **반복 story** 또는 **명시적 `state_key`** 를 읽어 derived 상태를 재구성
+- derived 상태는 모든 `story`에 대해 자동 생성하지 않는다. 기본적으로 동일 story가 `issue` 기준 2건 이상 누적되었거나, 명시적 `state_key`가 있을 때만 레짐 후보로 남긴다.
 - 수동 상태가 있는 `state_key`는 `state-sync`가 덮어쓰지 않는다.
 - `brief` 엔트리는 `derive_state=false`가 기본이라 `state-sync` 대상에서 제외된다.
 
@@ -368,8 +497,7 @@ python3 scripts/world_memory_cli.py brief-import \
   --skip-if-duplicate
 ```
 
-- 입력 파일은 `.json`, `.jsonl` 모두 지원한다.
-- 자동화와 예제는 `.json` 기준으로 사용한다. `.jsonl`은 레거시 호환용 입력 포맷일 뿐이다.
+- 입력 파일은 `.json`만 지원한다.
 - 저장소는 항상 `portfolio/world_issue_log.sqlite3`인 SQLite다.
 - 각 row는 최소한 `title`, `summary`, `sources[]`를 가져야 한다.
 - `entry_mode`는 자동으로 `brief`, `derive_state`는 자동으로 `false`로 강제된다.

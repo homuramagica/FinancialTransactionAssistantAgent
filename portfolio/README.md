@@ -145,5 +145,5 @@ python3 scripts/world_memory_cli.py list --entry-mode brief --subject Jensen --d
 - `--net-effect`
 - `--supersedes-active`
 
-`story`만 있는 일반 `add`도 derived 상태를 자동 갱신한다. `state-sync`는 기존 적재분 백필/재구성용이다.
-`brief-add`/`brief-import`는 주체·산업 브리프를 저장한다. 기본적으로 `derive_state=false`이며 `dedupe_key`로 중복 적재를 제어한다. 자동화 예제는 `.json` 입력을 기준으로 유지하고, `.jsonl`은 레거시 호환용으로만 남긴다.
+derived 상태는 모든 `story`에 대해 자동 생성하지 않는다. 기본적으로 동일 story가 `issue` 기준 2건 이상 누적되었거나, 명시적 `state_key`가 있을 때만 `state-sync`/자동 갱신 대상이 된다.
+`brief-add`/`brief-import`는 주체·산업 브리프를 저장한다. 기본적으로 `derive_state=false`이며 `dedupe_key`로 중복 적재를 제어한다. 자동화 예제와 입력 포맷은 `.json` 기준으로 유지한다.
