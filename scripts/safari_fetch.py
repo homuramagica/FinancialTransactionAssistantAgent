@@ -25,6 +25,7 @@ import io
 import importlib.util
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -63,6 +64,12 @@ _DEFAULT_BROWSER_LOCK_TIMEOUT = float(os.environ.get("NEWS_FETCH_LOCK_TIMEOUT", 
 _BROWSER_LOCK_POLL_INTERVAL = 0.25
 _SITE_THROTTLE_STATE_PATH = os.environ.get("NEWS_FETCH_SITE_THROTTLE_STATE_PATH", "/tmp/safari_fetch_site_throttle.json")
 _SITE_THROTTLE_INTERVAL_SECONDS = float(os.environ.get("NEWS_FETCH_SITE_THROTTLE_INTERVAL_SECONDS", "10"))
+_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS = float(
+    os.environ.get("NEWS_FETCH_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS", "20")
+)
+_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS = float(
+    os.environ.get("NEWS_FETCH_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS", "10")
+)
 _HTML_SNIPPET_LIMIT = 60_000
 _TEXT_HEALTHY_THRESHOLD = 200
 _PAGE_SETTLE_DELAY_SECONDS = 0.8
@@ -70,11 +77,15 @@ _SESSION_SETUP_TIMEOUT_SECONDS = 300
 _DEVTOOLS_LAUNCH_TIMEOUT = float(os.environ.get("NEWS_FETCH_DEVTOOLS_LAUNCH_TIMEOUT", "20"))
 _DEVTOOLS_HOST = os.environ.get("NEWS_FETCH_DEVTOOLS_HOST", "127.0.0.1")
 _DEVTOOLS_PORT = int(os.environ.get("NEWS_FETCH_DEVTOOLS_PORT", "9222"))
-_DEFAULT_PROFILE_PATH = Path(
-    os.environ.get("NEWS_FETCH_DEVTOOLS_PROFILE_PATH", REPO_ROOT / "tmp" / "chrome_devtools_profile")
-).expanduser()
+_BLOOMBERG_SESSION_SETTLE_SECONDS = float(
+    os.environ.get("NEWS_FETCH_BLOOMBERG_SESSION_SETTLE_SECONDS", "3.0")
+)
+_BLOOMBERG_SHORT_TEXT_THRESHOLD = int(
+    os.environ.get("NEWS_FETCH_BLOOMBERG_SHORT_TEXT_THRESHOLD", "1200")
+)
 _CHROME_APP_PATH = os.environ.get("NEWS_FETCH_CHROME_APP_PATH", "").strip()
 _CHROME_APP_NAME = os.environ.get("NEWS_FETCH_CHROME_APP_NAME", "Google Chrome")
+_CHROME_LAUNCH_MODE = os.environ.get("NEWS_FETCH_CHROME_LAUNCH_MODE", "auto").strip().lower()
 
 _RETRY_ERROR_SIGNALS = (
     "about:blank",
@@ -227,9 +238,17 @@ def _save_site_throttle_state(state: dict[str, float]) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _site_throttle_interval_for(key: str) -> float:
+    if key == "bloomberg":
+        return max(0.0, float(_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS))
+    if key == "dow_jones":
+        return max(0.0, float(_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS))
+    return max(0.0, float(_SITE_THROTTLE_INTERVAL_SECONDS))
+
+
 def _wait_for_site_access_slot(url: str) -> dict[str, Any]:
-    interval = max(0.0, float(_SITE_THROTTLE_INTERVAL_SECONDS))
     key = _site_access_key(url)
+    interval = _site_throttle_interval_for(key)
     if interval <= 0:
         return {"site": key, "wait_seconds": 0.0, "throttled": False}
 
@@ -268,6 +287,19 @@ def _browser_config(browser: Optional[str] = None) -> dict[str, Any]:
 
 def _browser_label(browser: Optional[str] = None) -> str:
     return _browser_config(browser)["display_name"]
+
+
+def _default_devtools_profile_path() -> Path:
+    explicit = os.environ.get("NEWS_FETCH_DEVTOOLS_PROFILE_PATH")
+    if explicit:
+        return Path(explicit).expanduser()
+
+    # Chrome 136+ ignores remote-debugging flags for the default Chrome data
+    # directory, so automation must keep using a non-standard user-data-dir.
+    return (REPO_ROOT / "tmp" / "chrome_devtools_profile").expanduser()
+
+
+_DEFAULT_PROFILE_PATH = _default_devtools_profile_path()
 
 
 def _browser_profile_path(browser: Optional[str] = None) -> Path:
@@ -310,11 +342,94 @@ def _resolve_chrome_app_path() -> Optional[Path]:
     return None
 
 
+def _chrome_info_plist_path(app_path: Path) -> Path:
+    return app_path / "Contents" / "Info.plist"
+
+
+def _read_chrome_info_plist(app_path: Path) -> dict[str, Any] | None:
+    plist_path = _chrome_info_plist_path(app_path)
+    try:
+        with open(plist_path, "rb") as handle:
+            payload = plistlib.load(handle)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _resolve_chrome_executable_path() -> Optional[Path]:
+    app_path = _resolve_chrome_app_path()
+    if app_path is None:
+        return None
+
+    info = _read_chrome_info_plist(app_path) or {}
+    executable_name = str(info.get("CFBundleExecutable") or "").strip()
+
+    candidates: list[Path] = []
+    if executable_name:
+        candidates.append(app_path / "Contents" / "MacOS" / executable_name)
+
+    bundle_name = app_path.stem.strip()
+    if bundle_name:
+        candidates.append(app_path / "Contents" / "MacOS" / bundle_name)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def _chrome_launch_target() -> str:
     app_path = _resolve_chrome_app_path()
     if app_path is not None:
         return str(app_path)
     return _CHROME_APP_NAME
+
+
+def _chrome_application_name() -> str:
+    app_path = _resolve_chrome_app_path()
+    if app_path is not None:
+        return app_path.stem
+    raw_name = (_CHROME_APP_NAME or "Google Chrome").strip()
+    return Path(raw_name).stem or "Google Chrome"
+
+
+def _chrome_launch_mode() -> str:
+    mode = (_CHROME_LAUNCH_MODE or "auto").strip().lower()
+    return mode if mode in {"auto", "direct", "open"} else "auto"
+
+
+def _chrome_launch_strategies() -> list[str]:
+    mode = _chrome_launch_mode()
+    if mode == "direct":
+        return ["direct", "open"]
+    if mode == "open":
+        return ["open", "direct"]
+    return ["open", "direct"]
+
+
+def _chrome_open_command(launch_args: list[str]) -> list[str]:
+    app_path = _resolve_chrome_app_path()
+    if app_path is not None:
+        # `open -a` expects an app name, not a bundle path.
+        return ["open", "-n", str(app_path), "--args", *launch_args]
+    return ["open", "-na", _chrome_application_name(), "--args", *launch_args]
+
+
+def _chrome_devtools_args(start_url: str) -> list[str]:
+    profile_path = _browser_profile_path()
+    profile_path.mkdir(parents=True, exist_ok=True)
+    return [
+        f"--user-data-dir={profile_path}",
+        f"--remote-debugging-port={_DEVTOOLS_PORT}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        start_url,
+    ]
 
 
 def _devtools_base_url() -> str:
@@ -395,7 +510,20 @@ def _ensure_browser_available(browser: Optional[str] = None) -> Optional[str]:
     except Exception as exc:
         return f"Chrome DevTools 프로필 디렉터리를 준비하지 못했습니다: {profile_path} ({exc})"
 
-    if _resolve_chrome_app_path() is not None:
+    app_path = _resolve_chrome_app_path()
+    if app_path is not None:
+        executable_path = _resolve_chrome_executable_path()
+        if executable_path is None:
+            plist_path = _chrome_info_plist_path(app_path)
+            return (
+                "Google Chrome 앱 번들은 찾았지만 실행 파일을 확인하지 못했습니다. "
+                f"app={app_path} plist={plist_path}"
+            )
+        if not os.access(executable_path, os.X_OK):
+            return (
+                "Google Chrome 실행 파일이 실행 가능 상태가 아닙니다. "
+                f"executable={executable_path}"
+            )
         return None
 
     probe = subprocess.run(
@@ -558,7 +686,64 @@ def _should_try_bloomberg_reload(
 
     text = (result.get("text") or "")[:2500]
     html = (result.get("html") or "")[:2500]
-    return _contains_login_prompt(text, html)
+    if _contains_login_prompt(text, html):
+        return True
+    return len((result.get("text") or "").strip()) < _BLOOMBERG_SHORT_TEXT_THRESHOLD
+
+
+def _payload_best_text(payload: dict[str, Any]) -> str:
+    article_text = str(payload.get("articleText") or "").strip()
+    body_text = str(payload.get("bodyText") or "").strip()
+    return article_text if len(article_text) >= _TEXT_HEALTHY_THRESHOLD else body_text
+
+
+def _should_wait_for_bloomberg_session_settle(url: str, payload: dict[str, Any]) -> bool:
+    """
+    Bloomberg는 로그인 세션이 몇 초 늦게 붙거나, 로그인 후에도 미완성 paywall 뷰가
+    잠깐 노출되는 경우가 있어 짧은 본문이면 한 번 더 대기 후 재평가합니다.
+    """
+    if not _host_matches(url, "bloomberg.com"):
+        return False
+
+    text = _payload_best_text(payload)
+    html = str(payload.get("articleHtml") or payload.get("bodyHtml") or "")[:2500]
+    if _contains_login_prompt(text[:2500], html):
+        return True
+    if _detect_paywall(text, html):
+        return True
+    return len(text.strip()) < _BLOOMBERG_SHORT_TEXT_THRESHOLD
+
+
+def _refine_bloomberg_payload_if_needed(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    websocket_url: str,
+    timeout: float,
+) -> dict[str, Any]:
+    if not _should_wait_for_bloomberg_session_settle(url, payload):
+        return payload
+
+    wait_seconds = max(0.0, _BLOOMBERG_SESSION_SETTLE_SECONDS)
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+
+    refreshed = _wait_for_devtools_article_payload(
+        websocket_url,
+        timeout=timeout,
+        reload_after_load=False,
+    )
+    if len(_payload_best_text(refreshed)) >= len(_payload_best_text(payload)):
+        refreshed = dict(refreshed)
+        refreshed["sessionSettleWaitSeconds"] = wait_seconds
+        refreshed["sessionSettleRechecked"] = True
+        return refreshed
+
+    payload = dict(payload)
+    payload["sessionSettleWaitSeconds"] = wait_seconds
+    payload["sessionSettleRechecked"] = True
+    payload["sessionSettleKeptOriginal"] = True
+    return payload
 
 
 def _canonicalize_url(url: str) -> str:
@@ -774,40 +959,121 @@ def _devtools_version(timeout: float = 3.0) -> Optional[dict[str, Any]]:
     return payload if isinstance(payload, dict) else None
 
 
-def _launch_devtools_browser(start_url: str = "about:blank") -> None:
-    profile_path = _browser_profile_path()
-    profile_path.mkdir(parents=True, exist_ok=True)
-    command = [
-        "open",
-        "-na",
-        _chrome_launch_target(),
-        "--args",
-        f"--user-data-dir={profile_path}",
-        f"--remote-debugging-port={_DEVTOOLS_PORT}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        start_url,
-    ]
+def _launch_devtools_browser(start_url: str = "about:blank") -> subprocess.Popen[str] | None:
+    executable_path = _resolve_chrome_executable_path()
+    launch_args = _chrome_devtools_args(start_url)
+    errors: list[str] = []
+
+    for strategy in _chrome_launch_strategies():
+        if strategy == "direct":
+            if executable_path is None:
+                errors.append("direct: Chrome 실행 파일 경로를 찾지 못했습니다.")
+                continue
+            try:
+                process = subprocess.Popen(
+                    [str(executable_path), *launch_args],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+                return process
+            except Exception as exc:
+                errors.append(f"direct: {exc}")
+                continue
+
+        if strategy == "open":
+            command = _chrome_open_command(launch_args)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+            if completed.returncode == 0:
+                return None
+            stderr = (completed.stderr or "").strip()
+            detail = stderr or f"returncode={completed.returncode}"
+            errors.append(f"open: {detail}")
+            continue
+
+        errors.append(f"{strategy}: 지원하지 않는 Chrome launch strategy")
+
+    detail = "; ".join(errors) if errors else "실행 시도 정보가 비어 있습니다."
+    raise RuntimeError(f"Chrome DevTools 브라우저를 실행하지 못했습니다. {detail}".strip())
+
+
+def _quit_chrome() -> None:
+    script = f"""
+if application "{_chrome_application_name()}" is running then
+    tell application "{_chrome_application_name()}" to quit
+end if
+"""
     completed = subprocess.run(
-        command,
+        ["osascript", "-e", script],
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
     )
     if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()
-        detail = f" stderr: {stderr}" if stderr else ""
-        raise RuntimeError(f"Chrome DevTools 브라우저를 실행하지 못했습니다.{detail}".strip())
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(f"Chrome 종료에 실패했습니다. {detail}".strip())
 
 
-def _wait_for_devtools_ready(timeout: float = _DEVTOOLS_LAUNCH_TIMEOUT) -> dict[str, Any]:
+def _chrome_launch_crash_detail(
+    context: str,
+    *,
+    returncode: int | None = None,
+    extra: str | None = None,
+) -> str:
+    parts = [f"{context} 브라우저가 실행 직후 비정상 종료된 것으로 보입니다."]
+    if returncode is not None:
+        suffix = f"returncode={returncode}."
+        if returncode in {-6, 134}:
+            suffix = f"returncode={returncode} (SIGABRT 가능)."
+        parts.append(suffix)
+    parts.append("macOS AppKit 초기화 단계 충돌일 수 있습니다.")
+    if extra:
+        parts.append(extra.strip())
+    return " ".join(part for part in parts if part).strip()
+
+
+def _is_chrome_running() -> bool:
+    completed = subprocess.run(
+        ["osascript", "-e", f'return application "{_chrome_application_name()}" is running'],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if completed.returncode != 0:
+        return False
+    return (completed.stdout or "").strip().lower() == "true"
+
+
+def _wait_for_devtools_ready(
+    timeout: float = _DEVTOOLS_LAUNCH_TIMEOUT,
+    *,
+    launched_process: subprocess.Popen[str] | None = None,
+) -> dict[str, Any]:
     deadline = time.monotonic() + max(1.0, timeout)
+    crash_check_after = time.monotonic() + 1.5
     last_error = "Chrome DevTools 연결 정보를 아직 찾지 못했습니다."
     while time.monotonic() < deadline:
+        if launched_process is not None:
+            returncode = launched_process.poll()
+            if returncode is not None:
+                raise RuntimeError(
+                    _chrome_launch_crash_detail("Chrome DevTools", returncode=returncode)
+                )
         payload = _devtools_version(timeout=2.0)
         if payload and payload.get("webSocketDebuggerUrl"):
             return payload
+        if time.monotonic() >= crash_check_after and not _is_chrome_running():
+            raise RuntimeError(_chrome_launch_crash_detail("Chrome DevTools", extra=last_error))
         time.sleep(0.5)
     raise TimeoutError(last_error)
 
@@ -821,8 +1087,8 @@ def _ensure_devtools_browser_running(
     if payload and payload.get("webSocketDebuggerUrl"):
         return payload
 
-    _launch_devtools_browser(start_url=start_url)
-    return _wait_for_devtools_ready(timeout=launch_timeout)
+    launched_process = _launch_devtools_browser(start_url=start_url)
+    return _wait_for_devtools_ready(timeout=launch_timeout, launched_process=launched_process)
 
 
 def _devtools_new_target(url: str, timeout: float = 10.0) -> dict[str, Any]:
@@ -1061,35 +1327,81 @@ def _fetch_via_devtools(
     timeout: int,
     browser: Optional[str],
     reload_after_load: bool,
+    close_after: bool,
 ) -> dict[str, Any]:
     availability_error = _ensure_browser_available(browser)
     if availability_error:
         return _failure_result(url, availability_error)
+
+    cleanup_error: str | None = None
+    result: dict[str, Any] | None = None
+    target_id = ""
+    failure: Exception | None = None
 
     try:
         _ensure_devtools_browser_running(start_url="about:blank")
         throttle = _wait_for_site_access_slot(url)
         target = _devtools_new_target(url, timeout=max(5.0, timeout))
         target_id = str(target.get("id") or "")
-        try:
-            reload_throttle: Optional[dict[str, Any]] = None
-            if reload_after_load:
-                reload_throttle = _wait_for_site_access_slot(url)
-            payload = _wait_for_devtools_article_payload(
-                target["webSocketDebuggerUrl"],
-                timeout=max(5.0, timeout),
-                reload_after_load=reload_after_load,
-            )
-            result = _extract_devtools_payload(payload, url, browser)
-            if isinstance(result, dict):
-                result["site_throttle"] = throttle
-                if reload_throttle is not None:
-                    result["reload_site_throttle"] = reload_throttle
-            return result
-        finally:
-            _devtools_close_target(target_id)
+        reload_throttle: Optional[dict[str, Any]] = None
+        if reload_after_load:
+            reload_throttle = _wait_for_site_access_slot(url)
+        payload = _wait_for_devtools_article_payload(
+            target["webSocketDebuggerUrl"],
+            timeout=max(5.0, timeout),
+            reload_after_load=reload_after_load,
+        )
+        payload = _refine_bloomberg_payload_if_needed(
+            url,
+            payload,
+            websocket_url=target["webSocketDebuggerUrl"],
+            timeout=max(5.0, timeout),
+        )
+        result = _extract_devtools_payload(payload, url, browser)
+        if isinstance(result, dict):
+            result["site_throttle"] = throttle
+            if reload_throttle is not None:
+                result["reload_site_throttle"] = reload_throttle
+            if "sessionSettleWaitSeconds" in payload:
+                result["session_settle_wait_seconds"] = payload["sessionSettleWaitSeconds"]
+                result["session_settle_rechecked"] = bool(payload.get("sessionSettleRechecked"))
+                if payload.get("sessionSettleKeptOriginal"):
+                    result["session_settle_kept_original"] = True
     except Exception as exc:
-        return _failure_result(url, _humanize_browser_error(str(exc), browser), detail=str(exc))
+        failure = exc
+    finally:
+        try:
+            _devtools_close_target(target_id)
+        finally:
+            if close_after:
+                try:
+                    _quit_chrome()
+                except Exception as cleanup_exc:
+                    cleanup_error = str(cleanup_exc)
+
+    if failure is not None:
+        detail = _humanize_browser_error(str(failure), browser)
+        if cleanup_error:
+            detail = f"{detail} | {cleanup_error}"
+        return _failure_result(url, detail, detail=str(failure))
+
+    if result is None:
+        result = _failure_result(url, f"{_browser_label(browser)} 본문 수집 결과가 비어 있습니다.")
+
+    if cleanup_error:
+        combined_error = cleanup_error
+        existing_error = str(result.get("error") or "").strip()
+        if existing_error:
+            combined_error = f"{existing_error} | {cleanup_error}"
+        return _failure_result(
+            str(result.get("url") or url),
+            combined_error,
+            title=str(result.get("title") or ""),
+            text=str(result.get("text") or ""),
+            html=str(result.get("html") or ""),
+        )
+
+    return result
 
 
 def _fetch_result_is_healthy(result: dict[str, Any]) -> bool:
@@ -1129,7 +1441,6 @@ def _fetch_once(
     lock_timeout: Optional[float] = None,
     reload_after_load: bool = False,
 ) -> dict[str, Any]:
-    del close_after
     try:
         with _browser_session_lock(
             lock_timeout=lock_timeout,
@@ -1140,6 +1451,7 @@ def _fetch_once(
                 timeout=timeout,
                 browser=browser,
                 reload_after_load=reload_after_load,
+                close_after=close_after,
             )
     except TimeoutError as exc:
         return _browser_lock_error(url, exc)
@@ -1240,26 +1552,43 @@ def prepare_session(
     if availability_error:
         return _failure_result(url, availability_error)
 
+    cleanup_error: str | None = None
+    result: dict[str, Any] | None = None
+
     try:
         with _browser_session_lock(lock_timeout=lock_timeout, reason=f"session-setup:{url}"):
             _ensure_devtools_browser_running(start_url="about:blank", launch_timeout=max(10.0, timeout))
             target = _devtools_new_target(url, timeout=max(5.0, timeout))
-            print(
-                "[session-setup] 디버그 Chrome 프로필에서 로그인/구독 인증을 완료한 뒤 Enter를 눌러 계속하세요. "
-                f"profile={_browser_profile_path(browser)} port={_DEVTOOLS_PORT}",
-                file=sys.stderr,
-            )
-            input()
-            _devtools_close_target(str(target.get("id") or ""))
-            return {
-                "success": True,
-                "url": url,
-                "profile_path": str(_browser_profile_path(browser)),
-                "devtools_port": _DEVTOOLS_PORT,
-                "error": None,
-            }
+            try:
+                print(
+                    "[session-setup] 디버그 Chrome 프로필에서 로그인/구독 인증을 완료한 뒤 Enter를 눌러 계속하세요. "
+                    f"profile={_browser_profile_path(browser)} port={_DEVTOOLS_PORT}",
+                    file=sys.stderr,
+                )
+                input()
+                result = {
+                    "success": True,
+                    "url": url,
+                    "profile_path": str(_browser_profile_path(browser)),
+                    "devtools_port": _DEVTOOLS_PORT,
+                    "error": None,
+                }
+            finally:
+                _devtools_close_target(str(target.get("id") or ""))
+                try:
+                    _quit_chrome()
+                except Exception as cleanup_exc:
+                    cleanup_error = str(cleanup_exc)
     except Exception as exc:
-        return _failure_result(url, _humanize_browser_error(str(exc), browser), detail=str(exc))
+        detail = _humanize_browser_error(str(exc), browser)
+        if cleanup_error:
+            detail = f"{detail} | {cleanup_error}"
+        return _failure_result(url, detail, detail=str(exc))
+
+    if cleanup_error:
+        return _failure_result(url, cleanup_error)
+
+    return result or _failure_result(url, "세션 준비 결과가 비어 있습니다.")
 
 
 def get_article_links(url: str, source: str, timeout: int = 15) -> list[dict[str, str]]:
@@ -1285,12 +1614,17 @@ def bloomberg_load_more(url: str, clicks: int = 2, timeout: int = 20) -> list[di
     return _fetch_rss_links_for_source("bloomberg", timeout=timeout)
 
 
-def diagnose(browser: Optional[str] = None, lock_timeout: Optional[float] = None) -> dict[str, Any]:
+def diagnose(
+    browser: Optional[str] = None,
+    lock_timeout: Optional[float] = None,
+    close_after: bool = True,
+) -> dict[str, Any]:
     """설정된 Chrome DevTools 세션 연결/페이지 로드 가능 여부를 진단합니다."""
     normalized = _normalize_browser(browser)
     browser_label = _browser_label(normalized)
     profile_path = _browser_profile_path(normalized)
     app_path = _resolve_chrome_app_path()
+    executable_path = _resolve_chrome_executable_path()
 
     result: dict[str, Any] = {
         "browser": normalized,
@@ -1299,7 +1633,10 @@ def diagnose(browser: Optional[str] = None, lock_timeout: Optional[float] = None
         "profile_path": str(profile_path),
         "chrome_app_name": _CHROME_APP_NAME,
         "chrome_app_path": str(app_path) if app_path is not None else None,
+        "chrome_executable_path": str(executable_path) if executable_path is not None else None,
         "chrome_launch_target": _chrome_launch_target(),
+        "chrome_launch_mode": _chrome_launch_mode(),
+        "chrome_launch_strategies": _chrome_launch_strategies(),
         "devtools_port": _DEVTOOLS_PORT,
         "headless": False,
     }
@@ -1315,9 +1652,11 @@ def diagnose(browser: Optional[str] = None, lock_timeout: Optional[float] = None
         result["launch_probe"] = {"ok": False, "detail": detail}
         result["attach"] = {"ok": False, "stdout": "", "stderr": "", "detail": detail}
         result["javascript"] = {"ok": False, "stdout": "", "stderr": "", "detail": detail}
+        result["cleanup"] = {"ok": True, "detail": None}
         result["ready"] = False
         return result
 
+    cleanup_error: str | None = None
     try:
         with _browser_session_lock(
             lock_timeout=lock_timeout,
@@ -1332,18 +1671,29 @@ def diagnose(browser: Optional[str] = None, lock_timeout: Optional[float] = None
                 )
             finally:
                 _devtools_close_target(str(target.get("id") or ""))
+                if close_after:
+                    try:
+                        _quit_chrome()
+                    except Exception as cleanup_exc:
+                        cleanup_error = str(cleanup_exc)
     except TimeoutError as exc:
         detail = str(exc)
+        if cleanup_error:
+            detail = f"{detail} | {cleanup_error}"
         result["launch_probe"] = {"ok": False, "detail": detail}
         result["attach"] = {"ok": False, "stdout": "", "stderr": "", "detail": detail}
         result["javascript"] = {"ok": False, "stdout": "", "stderr": "", "detail": detail}
+        result["cleanup"] = {"ok": cleanup_error is None, "detail": cleanup_error}
         result["ready"] = False
         return result
     except Exception as exc:
         detail = _humanize_browser_error(str(exc), normalized)
+        if cleanup_error:
+            detail = f"{detail} | {cleanup_error}"
         result["launch_probe"] = {"ok": False, "detail": detail}
         result["attach"] = {"ok": False, "stdout": "", "stderr": "", "detail": detail}
         result["javascript"] = {"ok": False, "stdout": "", "stderr": "", "detail": detail}
+        result["cleanup"] = {"ok": cleanup_error is None, "detail": cleanup_error}
         result["ready"] = False
         return result
 
@@ -1363,12 +1713,49 @@ def diagnose(browser: Optional[str] = None, lock_timeout: Optional[float] = None
         "stderr": "",
         "detail": None,
     }
+    result["cleanup"] = {"ok": cleanup_error is None, "detail": cleanup_error}
     result["ready"] = (
         result["availability"]["ok"]
         and result["attach"]["ok"]
         and result["javascript"]["ok"]
     )
     return result
+
+
+def close_browser(
+    browser: Optional[str] = None,
+    lock_timeout: Optional[float] = None,
+) -> dict[str, Any]:
+    """배치 수집 뒤 남아 있는 Chrome DevTools 브라우저를 정리 종료합니다."""
+    normalized = _normalize_browser(browser)
+
+    try:
+        with _browser_session_lock(
+            lock_timeout=lock_timeout,
+            reason=f"close-browser:{normalized}",
+        ):
+            _quit_chrome()
+    except TimeoutError as exc:
+        return {
+            "ok": False,
+            "browser": normalized,
+            "closed": False,
+            "detail": str(exc),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "browser": normalized,
+            "closed": False,
+            "detail": _humanize_browser_error(str(exc), normalized),
+        }
+
+    return {
+        "ok": True,
+        "browser": normalized,
+        "closed": True,
+        "detail": None,
+    }
 
 
 if __name__ == "__main__":
@@ -1412,7 +1799,12 @@ if __name__ == "__main__":
         default=_DEFAULT_BROWSER_LOCK_TIMEOUT,
         help="다른 기사 연결 작업이 끝나기를 기다릴 최대 시간(초, 기본 90)",
     )
-    parser.add_argument("--no-close", action="store_true", help="호환용 옵션 (현재 내부에서 탭을 정리함)")
+    parser.add_argument("--no-close", action="store_true", help="수집 후 Chrome 앱을 종료하지 않음")
+    parser.add_argument(
+        "--close-browser",
+        action="store_true",
+        help="남아 있는 Chrome 앱을 정리 종료하고 결과를 JSON으로 반환",
+    )
     parser.add_argument(
         "--diagnose",
         action="store_true",
@@ -1420,8 +1812,25 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.diagnose:
-        print(json.dumps(diagnose(args.browser, lock_timeout=args.lock_timeout), ensure_ascii=False, indent=2))
+    if args.close_browser:
+        result = close_browser(
+            args.browser,
+            lock_timeout=args.lock_timeout,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0 if result.get("ok") else 1)
+    elif args.diagnose:
+        print(
+            json.dumps(
+                diagnose(
+                    args.browser,
+                    lock_timeout=args.lock_timeout,
+                    close_after=not args.no_close,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.session_setup:
         if not args.url:
             parser.error("session-setup에는 URL이 필요합니다.")

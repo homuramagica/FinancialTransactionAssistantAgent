@@ -12,7 +12,7 @@
 - 기본 브랜치: `main`
 - 빠른 커밋+푸시: `bash scripts/git_quick_commit.sh "커밋 메시지"`
 - 위 스크립트는 현재 브랜치 기준으로 `git add -A -> git commit -> git push`를 순서대로 수행한다.
-- 공유 제외 파일은 반드시 `.gitignore`를 따른다 (`.venv`, `tmp`, `reports`, 개인 로그 등).
+- 공유 제외 파일은 반드시 `.gitignore`를 따른다 (`.venv`, `tmp`, `reports`, `Research`, 개인 로그 등).
 - 단, `portfolio/world_issue_log.sqlite3`는 공유 대상이다.
 
 ## 동작 원칙
@@ -60,6 +60,7 @@
 - 정규 언론 FEED: `https://rss.app/feeds/_hc8HiU0HyBWHfWoM.csv`
 - 사용자가 뉴스 업데이트를 요청하면 `SKILLs/NewsRequest.md`를 참조한다.
   - 단, `Axios`, `악시오스`, `Axios식`, `악시오스식` 표현이 함께 포함된 경우에만 아래 `뉴스 기사 수집·요약 원칙 (NewsCollector)`를 우선 적용한다.
+- 사용자가 역사적 경제/금융 연구, 장기 시계열 맥락 정리, 자료 조사, 기사 원문 아카이브 구축, 특정 위기/제도/기업 사건 관련 자료 수집을 요청하면 `SKILLs/EconomicsResearch/SKILL.md`를 참조한다.
 - 사용자가 시장의 현재 상황에 대 분석/리포트를 요청하면 `SKILLs/MarketAnalysis.md`를 참조한다.
 - 사용자가 거시경제 분한석/전망 보고서를 요청하면 `SKILLs/MacroEconomics.md`를 참조한다.
 - 사용자가 기업 실적(earnings)을 요청하면 `SKILLs/Earnings.md`를 참조한다.
@@ -100,10 +101,58 @@
 - 이 기능은 일반 최신정보 FEED와 분리된 **전용 수집 경로**로 작동한다.
 - 사용자의 요청문에 `Axios`, `악시오스`, `Axios식`, `악시오스식` 중 하나가 포함된 경우에만 이 기능을 발동한다.
 - 위 키워드가 없는 일반 뉴스 요청은 기본적으로 `SKILLs/NewsRequest.md` 또는 일반 뉴스/시장 분석 흐름으로 처리한다.
-- 이 기능이 발동한 경우 최신 정보 조회 원칙의 CSV 피드와 텔레그램 피드(통합 CSV, 텔레그램 원본 채널)는 조회하지 않는다.
 - 출력은 `/NewsUpdate/` 폴더를 사용하며, 일반 보고서처럼 `reports/`에 저장하지 않는다.
-- 기사 선별 기준, 사용자 취향 가중치, RSS 소스, 본문 수집 방식, 상태 파일, 저유량 시간대 처리, 오류 보고서 형식 등 **운영 상세는 `SKILLs/NewsCollector/SKILL.md`를 단일 기준(source of truth)으로 따른다.**
-- 이 문서에는 NewsCollector의 상위 정책만 유지하고, 세부 절차와 예시는 `SKILLs/NewsCollector/SKILL.md`에만 둔다.
+- 기사 선별 기준, 오피니언/칼럼 취급, 사용자 취향 가중치, RSS 소스, 본문 수집 방식, 상태 파일, 오류 보고서 형식 등 **운영 상세는 `SKILLs/NewsCollector/SKILL.md`를 단일 기준(source of truth)으로 따른다.**
+- 이 문서에는 NewsCollector의 상위 정책만 유지하고, 세부 절차·예시·운영 판단은 `SKILLs/NewsCollector/SKILL.md`에만 둔다.
+
+## 경제/금융 연구 아카이브 원칙 (EconomicsResearch)
+- 이 기능은 최신 뉴스 요약과 분리된 **장기 연구용 원문 아카이브 경로**로 작동한다.
+- 사용자가 역사적 경제/금융 연구, 자료 조사, 참고문헌/기사 수집, 특정 사건 타임라인 복원, 위기 비교, 제도 변화 추적을 요청하면 이 기능을 우선 적용한다.
+- 운영 상세는 `SKILLs/EconomicsResearch/SKILL.md`를 단일 기준(source of truth)으로 따른다.
+- 원문 기사 수집 시 유료 매체 접근 방식은 기본적으로 `NewsCollector`의 브라우저 접속 방식을 재사용한다.
+  - 기본 경로: `firefox-visible`
+  - 폴백 경로: visible Chrome (`chrome`)
+  - 브라우저 락, 로그인/페이월 감지 원칙을 그대로 준용한다.
+  - 단, 연구 아카이브는 최신 뉴스 요약보다 더 보수적으로 접근하므로 매체 bucket별 접근 간격 기본값을 **15초**로 사용한다.
+- 단, 이 기능은 `Axios식 요약`을 만들지 않는다.
+  - 출력은 기사 요약본이 아니라 **기사 전문 아카이브용 Markdown 파일**이다.
+  - 각 파일에는 최소한 `기사 제목`, `매체명`, `게시 날짜`, `기사 URL`, `수집 시각(KST)`, `본문`이 포함되어야 한다.
+- 저장 경로는 `/Research/`다.
+  - `/Research/`는 공개 원격 저장소 푸시 대상에서 제외한다.
+  - 연구 아카이브 결과물을 `reports/`나 `/NewsUpdate/`에 저장하지 않는다.
+- 연구 아카이브는 `world_memory`와 별도 저장소를 사용한다.
+  - `world_memory`는 summary-first 중기 메모리다.
+  - `EconomicsResearch`는 raw article 중심의 장기 연구 아카이브다.
+  - 두 저장소를 섞지 않는다.
+  - `EconomicsResearch`에서는 `world_memory`를 기본 소스로 사용하지 않는다.
+- 연구 아카이브의 기본 저장소는 `Research/research_archive.sqlite3`다.
+  - 기사 카탈로그, 청크 인덱스, 태그, 검색용 임베딩을 별도 관리한다.
+  - 임베딩은 현 단계에서 **해시 기반 문자 n-gram 벡터**를 사용한다.
+  - 시맨틱 검색은 SQLite 카탈로그와 청크 임베딩을 함께 사용한다.
+- 연구 아카이브 구축 시 기본 분류 축은 아래를 우선 사용한다.
+  - `topic`: 예) `2008_crisis`, `private_credit`, `great_depression`
+  - `theme`: 예) `cdo`, `cds`, `repo`, `liquidity`, `regulation`
+  - `entity`: 예) `Bear Stearns`, `Lehman Brothers`, `AIG`, `Basel III`, `Dodd-Frank`
+  - `period`: 예) `pre_crisis`, `acute_crisis`, `post_crisis`, `current_echo`
+- 장기 연구에서는 FEED와 `world_memory`를 사용하지 않는다.
+  - 이 스킬의 기본 소스는 **직접 검색 + 아카이브 검색 + 공식 기관 자료**다.
+  - 특히 역사 연구는 `WSJ`, `Bloomberg`, `Barron's`, 공식 기관 자료(Fed, BIS, SEC, Treasury 등)를 함께 사용한다.
+
+## 집필 원고 저장 원칙
+- 사용자가 책, 연재물, 에세이, 칼럼, 챕터 초안, 서문/프롤로그, 에필로그, 장별 시놉시스, 문장 중심의 서사형 원고 작성을 요청하면 산출물은 기본적으로 `/Writing/` 경로에 저장한다.
+- `/Writing/`은 분석 보고서(`reports/`)나 원문 기사 아카이브(`Research/`)와 구분되는 **저자 작성 원고 전용 폴더**다.
+- 경제사·세계사 원고를 집필할 때는 `/Writing/README.md`를 먼저 확인해, 이 시리즈가 반복해 다루는 공통 주제의식과 서술 원칙을 맞춘다.
+- 주제별 장기 집필 프로젝트는 `/Writing/` 아래에 별도 하위 폴더를 두고 관리한다.
+  - 예: `Writing/Global Financial Crisis/`
+- 원고형 산출물은 가능하면 아래 구분을 유지한다.
+  - 책 전체 목차/기획안
+  - 서문/프롤로그/에필로그 초안
+  - 장별 시놉시스
+  - 본문 챕터 초안
+  - 집필 메모/구성 메모
+- `/Writing/`에는 **사용자가 실제로 읽고 다듬을 집필 결과물**을 저장하고, raw article 아카이브나 검색용 DB는 저장하지 않는다.
+- 원고 작성 시 참고용 기사·자료 수집은 `EconomicsResearch`를 사용하되, 최종 작성물은 `/Research/`가 아니라 `/Writing/`에 둔다.
+  - 최신 FEED 헤드라인이나 월드 메모리 요약만으로 연구 방향을 정하거나 결론을 내리지 않는다.
 
 ## 군사 충돌/전쟁 이슈 분류 원칙
 - **카테고리 자동 지정**: 군사 충돌 키워드(war, military, strike, attack, missile, drone attack, airstrike, bombing, troops, retaliation, 전쟁, 공격, 폭격, 미사일, 피격, 파병, 증파 등)가 감지되면 `category=geopolitics`로 자동 분류한다.
@@ -269,7 +318,11 @@ files = os.listdir(reports_dir)
   - 본문에서 정보를 충분히 제시한 뒤, 최종 행동 관점에서 핵심 판단(현재 레짐/핵심 리스크/우선 체크포인트)을 3~7줄로 요약한다.
 - 시장/섹터/거시/뉴스/실적/포트폴리오 상담 등 **보고서 작성 요청은 기본적으로 `reports/` 경로에 `.md` 파일로 생성**한다.
   - **단, `SKILLs/NewsCollector/SKILL.md`를 통해 수집·요약된 뉴스 기사 파일은 예외이며, 반드시 `/NewsUpdate/` 폴더에 저장한다.**
+  - **단, `SKILLs/EconomicsResearch/SKILL.md`를 통해 수집된 원문 기사/연구 아카이브는 예외이며, 반드시 `/Research/` 경로에 저장한다.**
+  - **단, 책/연재/에세이/챕터/서문/에필로그 등 집필 원고는 예외이며, 반드시 `/Writing/` 경로에 저장한다.**
   - NewsCollector 결과물을 `reports/`에 저장하거나, 반대로 일반 보고서를 `/NewsUpdate/`에 저장해서는 안 된다.
+  - EconomicsResearch 결과물을 `reports/`나 `/NewsUpdate/`에 저장해서는 안 된다.
+  - 집필 원고를 `reports/`, `/NewsUpdate/`, `/Research/`에 저장해서는 안 된다.
   - 기본 응답은 파일 저장 경로, 핵심 요약, 필요 시 다음 액션만 짧게 안내한다.
   - 사용자가 명시적으로 원할 때만 일반 채팅 본문으로 장문 보고서를 직접 출력한다.
   - 다른 스킬/도구가 HTML, PNG, PDF 등 별도 산출물을 필수로 요구하는 경우에는 그 형식을 우선하되, 가능하면 함께 `.md` 요약본도 제공한다.

@@ -1294,9 +1294,13 @@ def _enrich_world_issue_payload(
     entry_mode = _normalize_entry_mode(str(working.get("entry_mode", "issue")))
     story = str(working.get("story", "")).strip()
     family = _canonical_story_family_label(str(working.get("story_family", "")).strip())
+    manual_story_override = entry_mode == "brief" and _coerce_bool(
+        working.get("manual_story_override"),
+        default=False,
+    )
     routed: dict[str, str] | None = None
     routing_payload = dict(working)
-    if entry_mode == "brief":
+    if entry_mode == "brief" and not manual_story_override:
         for field in (
             "story",
             "story_key",
@@ -1306,7 +1310,7 @@ def _enrich_world_issue_payload(
             "story_checkpoint",
         ):
             routing_payload.pop(field, None)
-    if not story or entry_mode == "brief":
+    if not story or (entry_mode == "brief" and not manual_story_override):
         routed = _infer_story_metadata_by_rules(routing_payload)
         if routed is None:
             catalog = story_catalog if story_catalog is not None else _build_story_router_catalog(conn)
@@ -1329,7 +1333,10 @@ def _enrich_world_issue_payload(
         if str(routed.get("story_checkpoint", "")).strip():
             working["story_checkpoint"] = str(routed.get("story_checkpoint", "")).strip()
     elif story:
-        if entry_mode == "brief" and (
+        if entry_mode == "brief" and manual_story_override:
+            for field in ("story_thesis", "story_checkpoint"):
+                working.pop(field, None)
+        elif entry_mode == "brief" and (
             str(working.get("story_thesis", "")).strip() or str(working.get("story_checkpoint", "")).strip()
         ):
             for field in (
@@ -1341,7 +1348,7 @@ def _enrich_world_issue_payload(
                 "story_checkpoint",
             ):
                 working.pop(field, None)
-        elif family:
+        if family:
             working["story_family"] = family
             working["story_family_key"] = _normalize_story_family_key(family)
         else:
@@ -5394,7 +5401,7 @@ def _handle_cleanup(args: argparse.Namespace) -> int:
         story_links_upserted = _sync_story_links(conn, replace_existing=True)
         normalized_story_links = _normalize_story_links(conn)
         family_scanned, family_updated = _backfill_story_families(conn)
-        story_links_upserted = _sync_story_links(conn, replace_existing=True)
+        story_links_upserted += _sync_story_links(conn, replace_existing=True)
         normalized_story_links += _normalize_story_links(conn)
         family_split_suggestions = _refresh_story_family_split_suggestions(conn, replace_existing=True)
         processed = _rebuild_taxonomy_index(conn)

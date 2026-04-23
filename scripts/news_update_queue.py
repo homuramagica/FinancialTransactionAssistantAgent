@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import sys
 import unicodedata
@@ -74,13 +75,29 @@ def _dedupe_candidates(rows: list[dict[str, Any]], source: str) -> list[dict[str
     return items
 
 
+def _parse_published_at(value: str) -> datetime:
+    text = (value or "").strip()
+    if not text:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _fetch_source_candidates(source: str, timeout: int) -> list[dict[str, str]]:
     if source == "bloomberg":
         rows = sf._fetch_rss_rows(sf.BLOOMBERG_RSS_CSV_URL, timeout=timeout)
-        return _dedupe_candidates(rows, source)
+        items = _dedupe_candidates(rows, source)
+        return sorted(items, key=lambda item: _parse_published_at(item["published_at"]), reverse=True)
 
     rows = sf._fetch_rss_rows(sf.DOW_JONES_RSS_CSV_URL, timeout=timeout)
-    return _dedupe_candidates(rows, source)
+    items = _dedupe_candidates(rows, source)
+    return sorted(items, key=lambda item: _parse_published_at(item["published_at"]), reverse=True)
 
 
 def _slice_since_last(

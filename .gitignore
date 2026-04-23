@@ -26,6 +26,7 @@ env/
 # Generated outputs
 tmp/
 reports/
+Research/
 
 # Local runtime logs/databases
 portfolio/*.jsonl

@@ -34,6 +34,17 @@ python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 12 --
 를 사용한다.
 
 파일명은 호환성 때문에 유지하지만 브라우저 수집 경로는 DevTools 전용이다.
+본문 수집이나 진단이 끝나면 탭을 닫고 Chrome 앱도 기본적으로 종료한다.
+필요할 때만 `--no-close`로 Chrome 종료를 생략할 수 있다.
+
+`scripts/firefox_visible_fetch.py`는
+- Firefox 일반 모드를 보이는 창으로 직접 열고
+- 기사 본문을 확보하면 탭을 닫고 Firefox 앱도 종료하고
+- Bloomberg는 기본 20초, Dow Jones 계열은 기본 10초 간격을 두는
+메인 수집 경로다.
+
+이 경로는 `open -a Firefox ...` + macOS UI scripting만 사용하며,
+Playwright / Firefox remote debugging / WebDriver / BiDi를 쓰지 않는다.
 
 ## 기본 설정
 
@@ -41,8 +52,10 @@ python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 12 --
 - 이전 `safari` 설정이나 `NEWS_FETCH_BROWSER=safari` 값이 남아 있어도 내부적으로 `chrome`으로 정규화된다.
 - Python 패키지 `websockets`가 필요하다: `python3 -m pip install websockets`
 - 기본 DevTools 프로필 경로는 `tmp/chrome_devtools_profile`이며 `NEWS_FETCH_DEVTOOLS_PROFILE_PATH`로 바꿀 수 있다.
+- Chrome 136+ 보안 변경 때문에 기본 Chrome 사용자 데이터 폴더에는 원격 디버깅 포트를 붙일 수 없어, 비표준 사용자 데이터 폴더를 유지해야 한다.
 - 기본 원격 디버깅 포트는 `9222`이며 `NEWS_FETCH_DEVTOOLS_PORT`로 바꿀 수 있다.
-- `safari_fetch.py`는 필요한 경우 `Google Chrome.app`를 DevTools 포트와 전용 프로필로 직접 띄운다.
+- `safari_fetch.py`는 필요한 경우 Chrome 번들 내부 실행 파일을 우선 직접 실행하고, 실패하면 `open -na Google Chrome.app`로 한 번 더 폴백한다.
+- LaunchServices가 간헐적으로 깨지는 환경이면 `NEWS_FETCH_CHROME_LAUNCH_MODE=direct`로 강제할 수 있다. 기본값은 `auto`다.
 - 브라우저 자동화는 공용 파일 락(`/tmp/safari_fetch_browser.lock`)으로 직렬화된다.
   동시에 여러 `safari_fetch.py` 프로세스를 띄워도 기사 본문 연결은 자동으로 한 건씩 순서대로 진행된다.
   필요하면 `--lock-timeout 180`처럼 대기 시간을 늘릴 수 있다.
@@ -53,7 +66,7 @@ python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 12 --
 python3 scripts/safari_fetch.py --diagnose --browser chrome
 ```
 
-- 이 진단은 `websockets` 패키지, Chrome DevTools 포트 연결, 전용 프로필 접근, 페이지 JavaScript 실행 여부를 한 번에 점검한다.
+- 이 진단은 `websockets` 패키지, Chrome 앱 번들/실행 파일 검증, DevTools 포트 연결, 전용 프로필 접근, 페이지 JavaScript 실행 여부를 한 번에 점검한다.
 
 ## 세션 준비
 
@@ -65,6 +78,7 @@ python3 scripts/safari_fetch.py https://www.wsj.com --session-setup
 
 - 브라우저 창이 열리면 로그인/구독 인증을 완료한 뒤 Enter를 누른다.
 - 완료되면 `tmp/chrome_devtools_profile` 아래의 Chrome 프로필에 세션이 유지된다.
+- 다른 위치를 쓰고 싶다면 `NEWS_FETCH_DEVTOOLS_PROFILE_PATH`로 명시한 경로 아래에 세션이 유지된다.
 - 이후 본문 수집은 이 로그인된 DevTools Chrome 세션의 새 탭에서 진행된다.
 
 ## 링크 수집 예시
@@ -88,8 +102,15 @@ python3 scripts/safari_fetch.py ignored --load-more --source bloomberg
 
 `scripts/news_update_harness.py`는 Axios식 기사 초안과 `.state.json` 갱신을 한 번에 검증하고,
 검증을 통과한 배치만 `/NewsUpdate/`에 원자적으로 반영한다.
-또한 기사 본문 수집을 `safari_fetch.py` subprocess로 감싸서,
-브라우저 세션 종료나 DevTools 연결 불안정 신호가 나오면 자동 진단 후 1회 더 복구 재시도할 수 있다.
+또한 기사 본문 수집을 브라우저별 subprocess로 감싸서,
+Chrome DevTools 기본 경로와 visible 계열 폴백 경로를 함께 관리한다.
+
+기본 브라우저는 `chrome`이다.
+- 메인 경로: `chrome` (Chrome DevTools)
+- 1차 폴백: `chrome-visible`
+- 2차 폴백: `firefox-visible`
+- visible 경로들은 원격 디버깅/Playwright를 사용하지 않는다.
+- 매체별 접근 간격 기본값은 `bloomberg=20초`, `dow_jones=10초`다.
 
 ### 신규 기사 후보 큐 확인
 
@@ -136,11 +157,18 @@ python3 scripts/news_update_harness.py fetch-article --url "https://www.wsj.com/
 python3 scripts/news_update_harness.py fetch-batch \
   --url "https://www.wsj.com/articles/example-1" \
   --url "https://www.barrons.com/articles/example-2"
+python3 scripts/news_update_harness.py fetch-article \
+  --browser chrome \
+  --url "https://www.wsj.com/articles/example"
 ```
 
-- `fetch-batch`는 URL별로 `safari_fetch.py` subprocess를 새로 실행한다.
-- 브라우저 연결 불안정 신호가 나오면 `--diagnose`를 자동 실행하고, 하네스 차원에서 1회 더 재시도한다.
-- 자동화에서는 Python 루프 안에서 `safari_fetch.py`를 직접 반복 호출하기보다 이 하네스를 우선 사용한다.
+- 기본값인 `firefox-visible`은 Firefox 일반 모드를 눈에 보이는 창으로만 조작하고, 본문 확보 후 탭을 닫은 뒤 Firefox 앱도 종료한다.
+- 기본값인 `chrome`은 `safari_fetch.py`의 Chrome DevTools 경로를 사용한다.
+- `chrome-visible`과 `firefox-visible`은 눈에 보이는 창으로만 조작하고, 본문 확보 후 탭을 닫은 뒤 앱도 종료한다.
+- `fetch-batch`는 URL별로 fetch subprocess를 새로 실행하지만, `chrome` 기본 경로와 `chrome-visible`/`firefox-visible` 명시 경로 모두 브라우저 세션 하나를 유지한 채 기사들을 순차 수집하고 배치 종료 직전에 한 번만 정리 종료한다.
+- `fetch-batch`는 기본적으로 자동 브라우저 폴백을 끄고 진행해, 한 기사 실패 때문에 배치 전체가 오래 늘어지는 일을 줄인다. 필요할 때만 `--allow-chrome-fallback`을 명시한다.
+- `chrome` 경로에서는 DevTools 불안정 신호가 나오면 `--diagnose`를 자동 실행하고, 하네스 차원에서 1회 더 재시도한다.
+- 자동화에서는 Python 루프 안에서 `safari_fetch.py`나 `firefox_visible_fetch.py`를 직접 반복 호출하기보다 이 하네스를 우선 사용한다.
 
 ### NewsUpdate 디렉터리 일괄 검사
 
@@ -150,6 +178,59 @@ python3 scripts/news_update_harness.py validate-dir --workspace . --glob "*.md" 
 
 - 최근 20개 기사/오류 보고서를 한 번에 검사한다.
 - `--glob`으로 기사만(`26-*.md`) 또는 오류 보고서만(`ERROR-*.md`) 따로 볼 수 있다.
+
+---
+
+# Research 아카이브 도구
+
+`scripts/research_archive_cli.py`는 장기 경제/금융 연구용 기사 원문 아카이브를 `/Research/`에 저장하고,
+별도 SQLite 카탈로그(`Research/research_archive.sqlite3`)와 청크 검색 인덱스를 관리한다.
+
+- 목적: `Axios식 요약`이 아니라 **기사 전문 보관 + 검색 가능 아카이브 구축**
+- 저장 위치: `/Research/`
+- 검색 인덱스: 해시 기반 문자 n-gram 임베딩 + SQLite 카탈로그
+- 주의: 이 도구는 `FEED`나 `world_memory` 대신 **직접 검색으로 찾은 자료**를 쌓는 용도다.
+- 유료 매체 본문 수집은 `scripts/news_update_harness.py fetch-article` 경로를 내부적으로 재사용한다.
+- 연구 아카이브 수집은 봇 탐지 회피를 위해 매체 bucket별 접근 간격 기본값을 **15초**로 사용한다.
+
+## 초기화
+
+```bash
+python3 scripts/research_archive_cli.py init
+```
+
+## 기사 1건 수집 + 저장 + 인덱싱
+
+```bash
+python3 scripts/research_archive_cli.py fetch-url \
+  --url "https://www.bloomberg.com/..." \
+  --tag 2008_crisis \
+  --tag cdo \
+  --tag pre_crisis
+```
+
+## 기존 Markdown 기사 인덱싱
+
+```bash
+python3 scripts/research_archive_cli.py ingest-md \
+  --file "Research/2008-09-15 Bloomberg ... .md" \
+  --tag lehman
+```
+
+## 시맨틱 검색
+
+```bash
+python3 scripts/research_archive_cli.py search \
+  --query "AIG CDS collateral calls" \
+  --limit 10 \
+  --format md
+```
+
+## 최근 기사 목록
+
+```bash
+python3 scripts/research_archive_cli.py list --limit 20 --format md
+```
 
 ---
 
@@ -454,6 +535,24 @@ python3 scripts/world_memory_cli.py cleanup
 - `audit`: 스토리 채움률, dedupe 커버리지, 레거시 공백, orphan brief, cleanup 대상 수를 한 번에 점검한다.
 - `cleanup`: 정규화, 레거시 메타데이터 백필, story routing, canonical story family 정리, taxonomy/state/story-link 재생성을 묶어 실행한다.
 - 운영 루틴은 보통 `audit -> cleanup --dry-run -> cleanup` 순서를 권장한다.
+
+## 유지보수 하네스
+
+```bash
+python3 scripts/world_memory_harness.py
+python3 scripts/world_memory_harness.py --strict
+python3 scripts/world_memory_harness.py --format json --out reports/world_memory_harness.json
+```
+
+- `world_memory_harness.py`는 `audit` 지표를 읽어 유지보수 임계치를 빠르게 검사한다.
+- 기본 점검 항목:
+  - `Cleanup candidates` 최대치
+  - `Legacy blank issues` 최대치
+  - `Orphan briefs with metadata` 비율
+  - `Issue/Brief dedupe fill rate` 최소치
+  - 최근 기간 엔트리 최소 개수
+- `--strict`를 켜면 경고(`warn`)가 하나라도 있을 때 종료코드 `1`로 반환한다.
+- 운영 자동화에서는 하네스를 먼저 돌린 뒤, 경고가 있으면 `cleanup --dry-run`으로 원인 범위를 확인하는 흐름을 권장한다.
 
 ## 상태 스냅샷 조회 / 재구성
 

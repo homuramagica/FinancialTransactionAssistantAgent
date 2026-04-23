@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import argparse
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +55,60 @@ class WorldMemoryCliTests(unittest.TestCase):
             derive_state=True,
             dedupe_key="",
         )
+
+    def _make_brief_payload(
+        self,
+        *,
+        as_of: dt.datetime,
+        title: str,
+        summary: str,
+        story: str,
+        story_family: str = "",
+        story_thesis: str = "",
+        story_checkpoint: str = "",
+        manual_story_override: bool = False,
+        tags: list[str] | None = None,
+        subjects: list[dict[str, str]] | None = None,
+        industries: list[str] | None = None,
+    ) -> dict:
+        payload = wm._build_issue_payload(
+            as_of=as_of,
+            category="stock_bond",
+            region="GLOBAL",
+            importance="medium",
+            entry_mode="brief",
+            title=title,
+            summary=summary,
+            why_it_matters="",
+            portfolio_link="",
+            horizon="수일~수주",
+            tickers=["ITA"],
+            tags=tags or ["defense", "ipo", "europe"],
+            subjects=subjects
+            or [{"name": "European Defense Industry", "type": "market_actor"}],
+            industries=industries or ["defense", "capital_markets", "manufacturing"],
+            event_kind="industry_trend",
+            sources=self._sources(),
+            story=story,
+            story_key="",
+            story_family=story_family,
+            story_thesis=story_thesis,
+            story_checkpoint=story_checkpoint,
+            story_relation="",
+            related_story="",
+            story_note="",
+            story_confidence=0.55,
+            state_key="",
+            state_label="",
+            state_status="",
+            state_bias="",
+            net_effect="",
+            derive_state=False,
+            dedupe_key="",
+        )
+        if manual_story_override:
+            payload["manual_story_override"] = True
+        return payload
 
     def test_treasury_story_rule_requires_us_signal(self) -> None:
         japan_story = wm._infer_story_metadata_by_rules(
@@ -183,6 +238,161 @@ class WorldMemoryCliTests(unittest.TestCase):
                 self.assertEqual(updated, 1)
                 self.assertEqual(row["story_family_key"], "중동_리스크와_에너지_가격")
                 self.assertEqual(row["story_family_label"], "중동 리스크와 에너지 가격")
+
+    def test_cleanup_dry_run_rolls_back_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "world_issue_log.sqlite3"
+            as_of = dt.datetime(2026, 4, 10, 9, 0, tzinfo=ZoneInfo(wm.DEFAULT_TZ))
+            with wm._connect_db(db_path) as conn:
+                wm._init_db(conn)
+                payload = wm._prepare_payload_for_storage(
+                    conn,
+                    self._make_issue_payload(
+                        as_of=as_of,
+                        title="정상 제목",
+                        summary="cleanup dry-run 롤백 검증",
+                        story="테스트 스토리",
+                    ),
+                    story_catalog=[],
+                )
+                wm._upsert_sqlite_payload(conn, payload)
+                conn.execute(
+                    "UPDATE world_issue_entries SET title = ? WHERE event_id = ?",
+                    ("BROKEN_TITLE", payload["event_id"]),
+                )
+                conn.commit()
+
+            dry_run_args = argparse.Namespace(
+                base_dir=tmpdir,
+                db_file="world_issue_log.sqlite3",
+                dry_run=True,
+            )
+            wm._handle_cleanup(dry_run_args)
+
+            with wm._connect_db(db_path) as conn:
+                row = conn.execute(
+                    "SELECT title FROM world_issue_entries WHERE event_id = ?",
+                    (payload["event_id"],),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(row["title"], "BROKEN_TITLE")
+
+            run_args = argparse.Namespace(
+                base_dir=tmpdir,
+                db_file="world_issue_log.sqlite3",
+                dry_run=False,
+            )
+            wm._handle_cleanup(run_args)
+
+            with wm._connect_db(db_path) as conn:
+                row = conn.execute(
+                    "SELECT title FROM world_issue_entries WHERE event_id = ?",
+                    (payload["event_id"],),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(row["title"], "정상 제목")
+
+    def test_manual_story_override_preserves_brief_story_during_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "world_issue_log.sqlite3"
+            as_of = dt.datetime(2026, 4, 20, 9, 0, tzinfo=ZoneInfo(wm.DEFAULT_TZ))
+            with wm._connect_db(db_path) as conn:
+                wm._init_db(conn)
+
+                competing_issue = wm._prepare_payload_for_storage(
+                    conn,
+                    self._make_issue_payload(
+                        as_of=as_of,
+                        title="AI 인프라 자본조달 병목 심화",
+                        summary="유사 태그가 있어도 manual brief story가 우선해야 한다.",
+                        story="데이터센터 수요 → 전력 병목",
+                    ),
+                    story_catalog=[],
+                )
+                wm._upsert_sqlite_payload(conn, competing_issue)
+
+                manual_brief = wm._prepare_payload_for_storage(
+                    conn,
+                    self._make_brief_payload(
+                        as_of=as_of + dt.timedelta(hours=1),
+                        title="유럽 방산 IPO 가속",
+                        summary="manual story를 부여한 brief가 cleanup 후에도 유지돼야 한다.",
+                        story="글로벌 방산 붐",
+                        story_family="글로벌 방산 붐",
+                        story_thesis="brief에는 저장되면 안 되는 issue용 필드",
+                        story_checkpoint="cleanup 시 제거돼야 한다.",
+                        manual_story_override=True,
+                    ),
+                )
+                self.assertEqual(manual_brief["story"], "글로벌 방산 붐")
+                self.assertEqual(manual_brief["story_family"], "글로벌 방산 붐")
+                self.assertNotIn("story_thesis", manual_brief)
+                self.assertNotIn("story_checkpoint", manual_brief)
+
+                wm._upsert_sqlite_payload(conn, manual_brief)
+                conn.commit()
+
+            with wm._connect_db(db_path) as conn:
+                wm._init_db(conn)
+                scanned, updated, skipped = wm._cleanup_world_issue_entries(conn)
+                self.assertEqual(scanned, 2)
+                self.assertEqual(skipped, 0)
+                self.assertEqual(updated, 0)
+
+                row = conn.execute(
+                    "SELECT payload_json FROM world_issue_entries WHERE event_id = ?",
+                    (manual_brief["event_id"],),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                stored = json.loads(str(row["payload_json"]))
+                self.assertEqual(stored["story"], "글로벌 방산 붐")
+                self.assertEqual(stored["story_family"], "글로벌 방산 붐")
+
+    def test_brief_import_skip_duplicate_by_dedupe_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "world_issue_log.sqlite3"
+            with wm._connect_db(db_path) as conn:
+                wm._init_db(conn)
+
+            import_path = Path(tmpdir) / "brief_rows.json"
+            import_payload = [
+                {
+                    "as_of": "2026-04-12T08:00:00+09:00",
+                    "category": "stock_bond",
+                    "region": "GLOBAL",
+                    "importance": "medium",
+                    "title": "중복 테스트 브리프",
+                    "summary": "dedupe_key 중복 방지 검증",
+                    "horizon": "수일~수주",
+                    "tickers": ["SPY"],
+                    "tags": ["test"],
+                    "subjects": [{"name": "Test Subject", "type": "institution"}],
+                    "industries": ["capital_markets"],
+                    "event_kind": "capital_markets",
+                    "dedupe_key": "brief_duplicate_case",
+                    "sources": [{"name": "Test Source", "url": "https://example.com"}],
+                }
+            ]
+            import_path.write_text(json.dumps(import_payload, ensure_ascii=False), encoding="utf-8")
+
+            args = argparse.Namespace(
+                base_dir=tmpdir,
+                db_file="world_issue_log.sqlite3",
+                from_file=str(import_path),
+                category="emerging",
+                region="GLOBAL",
+                importance="low",
+                horizon="수일~수주",
+                skip_if_duplicate=True,
+                dedupe_days=30,
+                dry_run=False,
+            )
+            first_code = wm._handle_brief_import(args)
+            second_code = wm._handle_brief_import(args)
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(second_code, 0)
+            self.assertEqual(wm._count_sqlite_rows(db_path), 1)
 
 
 if __name__ == "__main__":

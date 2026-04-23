@@ -64,11 +64,17 @@ ALLOWED_TRANSITIONS = {
 
 REQUIRED_STATE_KEYS = ("last_run_kst", "bloomberg", "wsj", "barrons")
 
-_FETCH_SCRIPT = Path(__file__).resolve().with_name("safari_fetch.py")
+_CHROME_DEVTOOLS_FETCH_SCRIPT = Path(__file__).resolve().with_name("safari_fetch.py")
+_CHROME_VISIBLE_FETCH_SCRIPT = Path(__file__).resolve().with_name("chrome_visible_fetch.py")
+_FIREFOX_VISIBLE_FETCH_SCRIPT = Path(__file__).resolve().with_name("firefox_visible_fetch.py")
 _DEFAULT_FETCH_TIMEOUT = 15
 _DEFAULT_FETCH_MAX_ATTEMPTS = 2
 _DEFAULT_BROWSER_LOCK_TIMEOUT = 90.0
 _DEFAULT_HARNESS_RECOVERY_WAIT = 1.5
+_DEFAULT_FETCH_BROWSER = "chrome"
+_DEFAULT_FETCH_SUBPROCESS_GRACE = 20.0
+_DEFAULT_FETCH_LOCK_TIMEOUT_CAP = 10.0
+_DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT = 20.0
 
 BROWSER_INSTABILITY_SIGNALS = (
     "target page, context or browser has been closed",
@@ -84,13 +90,33 @@ BROWSER_INSTABILITY_SIGNALS = (
     "탭이 중간에 닫혔습니다",
 )
 
+BROWSER_CRASH_SIGNALS = (
+    "sigabrt",
+    "abort trap: 6",
+    "exc_crash",
+    "nsapplication sharedapplication",
+    "_registerapplication",
+    "appkit 초기화",
+    "실행 직후 비정상 종료",
+)
+
+FIREFOX_LAUNCH_FAILURE_SIGNALS = (
+    "Firefox로 URL을 열지 못했습니다.",
+    "kLSNoExecutableErr",
+    "cannot be opened for an unexpected reason",
+)
+
 MANUAL_BROWSER_ACTION_SIGNALS = (
     "python websockets 패키지가 설치되어 있지 않습니다",
     "google chrome 앱을 찾지 못했습니다",
     "chrome devtools 프로필 디렉터리를 준비하지 못했습니다",
     "봇 차단 페이지가 반환되었습니다",
     "session-setup은 대화형 터미널",
+    "firefox 앱을 찾지 못했습니다",
+    "로그인 또는 구독 확인이 필요한 화면이 반환되었습니다",
 )
+
+_SUPPORTED_FETCH_BROWSERS = ("chrome", "chrome-visible", "firefox-visible")
 
 
 def _nfd(value: str) -> str:
@@ -125,6 +151,19 @@ def _normalize_lines(text: str) -> list[str]:
 
 def _non_empty_lines(text: str) -> list[str]:
     return [line.strip() for line in _normalize_lines(text) if line.strip()]
+
+
+def _validate_nbsp_block_separators(lines: list[str]) -> list[str]:
+    for idx, raw in enumerate(lines):
+        if raw.strip() != "&nbsp;":
+            continue
+        has_blank_line_before = idx > 0 and lines[idx - 1].strip() == ""
+        has_blank_line_after = idx + 1 < len(lines) and lines[idx + 1].strip() == ""
+        if raw != "&nbsp;" or not has_blank_line_before or not has_blank_line_after:
+            return [
+                "`&nbsp;` 구분자는 앞뒤 빈 줄이 있는 `\\n\\n&nbsp;\\n\\n` 형식이어야 합니다."
+            ]
+    return []
 
 
 def _find_intro_line(lines: list[str]) -> str | None:
@@ -165,6 +204,7 @@ def validate_article_content(filename: str, content: str) -> list[str]:
 
     if content.count("&nbsp;") < 3:
         issues.append("Axios 간격용 `&nbsp;` 구분이 부족합니다.")
+    issues.extend(_validate_nbsp_block_separators(lines))
 
     if len(stripped) < 900:
         issues.append("기사 본문이 너무 짧습니다.")
@@ -389,7 +429,11 @@ def _default_fetch_failure(url: str, error: str) -> dict[str, Any]:
     }
 
 
-def _run_json_subprocess(command: list[str]) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
+def _run_json_subprocess(
+    command: list[str],
+    *,
+    timeout: float | None = None,
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
     try:
         completed = subprocess.run(
             command,
@@ -397,7 +441,13 @@ def _run_json_subprocess(command: list[str]) -> tuple[subprocess.CompletedProces
             text=True,
             encoding="utf-8",
             check=False,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        timeout_value = timeout if timeout is not None else exc.timeout
+        return None, {
+            "error": f"subprocess 실행이 {timeout_value:g}초 제한을 넘겨 중단되었습니다.",
+        }
     except Exception as exc:
         return None, {"error": str(exc)}
 
@@ -450,6 +500,56 @@ def _has_browser_instability(payload: dict[str, Any]) -> bool:
     return _has_signal(_combined_browser_text(payload), BROWSER_INSTABILITY_SIGNALS)
 
 
+def _has_browser_crash(payload: dict[str, Any]) -> bool:
+    return _has_signal(_combined_browser_text(payload), BROWSER_CRASH_SIGNALS)
+
+
+def _normalize_fetch_browser(browser: str | None) -> str:
+    raw = (browser or _DEFAULT_FETCH_BROWSER).strip().lower()
+    aliases = {
+        "chrome": "chrome",
+        "chrome_devtools": "chrome",
+        "chrome-devtools": "chrome",
+        "devtools": "chrome",
+        "google-chrome": "chrome",
+        "chrome_visible": "chrome-visible",
+        "chrome-visible": "chrome-visible",
+        "firefox": "firefox-visible",
+        "firefox_visible": "firefox-visible",
+        "firefox-visible": "firefox-visible",
+    }
+    normalized = aliases.get(raw, raw)
+    if normalized not in _SUPPORTED_FETCH_BROWSERS:
+        raise ValueError(
+            "지원하지 않는 fetch 브라우저입니다. "
+            f"allowed={', '.join(_SUPPORTED_FETCH_BROWSERS)} requested={browser}"
+        )
+    return normalized
+
+
+def _fetch_script_path(browser: str) -> Path:
+    normalized = _normalize_fetch_browser(browser)
+    if normalized == "chrome":
+        return _CHROME_DEVTOOLS_FETCH_SCRIPT
+    if normalized == "chrome-visible":
+        return _CHROME_VISIBLE_FETCH_SCRIPT
+    return _FIREFOX_VISIBLE_FETCH_SCRIPT
+
+
+def _fetch_subprocess_timeout(
+    *,
+    browser: str,
+    timeout: int,
+    max_attempts: int,
+    lock_timeout: float,
+) -> float:
+    normalized_browser = _normalize_fetch_browser(browser)
+    attempt_budget = max_attempts if normalized_browser == "chrome" else 1
+    lock_budget = min(max(0.0, float(lock_timeout)), _DEFAULT_FETCH_LOCK_TIMEOUT_CAP)
+    runtime_budget = max(1.0, float(timeout)) * max(1, int(attempt_budget))
+    return lock_budget + runtime_budget + _DEFAULT_FETCH_SUBPROCESS_GRACE
+
+
 def _run_fetch_cli(
     url: str,
     *,
@@ -457,21 +557,53 @@ def _run_fetch_cli(
     timeout: int,
     max_attempts: int,
     lock_timeout: float,
+    close_after: bool = True,
 ) -> dict[str, Any]:
+    normalized_browser = _normalize_fetch_browser(browser)
+    fetch_script = _fetch_script_path(normalized_browser)
     command = [
         sys.executable,
-        str(_FETCH_SCRIPT),
+        str(fetch_script),
         url,
-        "--browser",
-        browser,
-        "--timeout",
-        str(timeout),
-        "--max-attempts",
-        str(max_attempts),
         "--lock-timeout",
         str(lock_timeout),
     ]
-    completed, payload = _run_json_subprocess(command)
+    if normalized_browser == "chrome":
+        command.extend(
+            [
+                "--browser",
+                "chrome",
+                "--timeout",
+                str(timeout),
+                "--max-attempts",
+                str(max_attempts),
+            ]
+        )
+    elif normalized_browser == "chrome-visible":
+        command.extend(
+            [
+                "--timeout",
+                str(timeout),
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "--timeout",
+                str(timeout),
+            ]
+        )
+    if not close_after:
+        command.append("--no-close")
+    completed, payload = _run_json_subprocess(
+        command,
+        timeout=_fetch_subprocess_timeout(
+            browser=normalized_browser,
+            timeout=timeout,
+            max_attempts=max_attempts,
+            lock_timeout=lock_timeout,
+        ),
+    )
     if completed is None:
         error = f"fetch CLI 실행에 실패했습니다. {payload.get('error', '')}".strip()
         return _default_fetch_failure(url, error)
@@ -499,17 +631,29 @@ def _run_fetch_cli(
     return result
 
 
-def _run_fetch_diagnose(*, browser: str, lock_timeout: float) -> dict[str, Any]:
+def _run_fetch_diagnose(
+    *,
+    browser: str,
+    lock_timeout: float,
+    close_after: bool = True,
+) -> dict[str, Any]:
+    normalized_browser = _normalize_fetch_browser(browser)
+    fetch_script = _fetch_script_path(normalized_browser)
     command = [
         sys.executable,
-        str(_FETCH_SCRIPT),
+        str(fetch_script),
         "--diagnose",
-        "--browser",
-        browser,
         "--lock-timeout",
         str(lock_timeout),
     ]
-    completed, payload = _run_json_subprocess(command)
+    if normalized_browser == "chrome":
+        command.extend(["--browser", "chrome"])
+    if not close_after:
+        command.append("--no-close")
+    completed, payload = _run_json_subprocess(
+        command,
+        timeout=_DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT,
+    )
     if completed is None:
         return {"ready": False, "error": f"browser diagnose 실행에 실패했습니다. {payload.get('error', '')}".strip()}
 
@@ -522,6 +666,44 @@ def _run_fetch_diagnose(*, browser: str, lock_timeout: float) -> dict[str, Any]:
     else:
         payload = dict(payload)
 
+    payload["cli_returncode"] = completed.returncode
+    return payload
+
+
+def _run_browser_cleanup(*, browser: str, lock_timeout: float) -> dict[str, Any]:
+    normalized_browser = _normalize_fetch_browser(browser)
+    fetch_script = _fetch_script_path(normalized_browser)
+    command = [
+        sys.executable,
+        str(fetch_script),
+        "--close-browser",
+        "--lock-timeout",
+        str(lock_timeout),
+    ]
+    if normalized_browser == "chrome":
+        command.extend(["--browser", "chrome"])
+    completed, payload = _run_json_subprocess(
+        command,
+        timeout=_DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT,
+    )
+    if completed is None:
+        return {
+            "ok": False,
+            "browser": normalized_browser,
+            "detail": f"browser cleanup 실행에 실패했습니다. {payload.get('error', '')}".strip(),
+        }
+
+    if payload is None:
+        stderr = (completed.stderr or "").strip()
+        detail = "browser cleanup이 JSON을 반환하지 않았습니다."
+        if stderr:
+            detail = f"{detail} stderr: {stderr}"
+        payload = {"ok": False, "browser": normalized_browser, "detail": detail}
+    else:
+        payload = dict(payload)
+
+    payload.setdefault("ok", completed.returncode == 0)
+    payload.setdefault("browser", normalized_browser)
     payload["cli_returncode"] = completed.returncode
     return payload
 
@@ -540,8 +722,12 @@ def _diagnose_failure_detail(payload: dict[str, Any]) -> str:
     for candidate in candidates:
         text = _browser_text(candidate).strip()
         if text:
+            if _has_browser_crash(payload) and "비정상 종료" not in text:
+                return f"브라우저 앱이 실행 직후 비정상 종료된 것으로 보입니다. {text}".strip()
             return text
 
+    if _has_browser_crash(payload):
+        return "브라우저 앱이 실행 직후 비정상 종료된 것으로 보입니다."
     return "브라우저 preflight 진단이 실패했습니다."
 
 
@@ -553,16 +739,140 @@ def _preflight_failure_result(url: str, diagnose: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _should_degrade_preflight(browser: str, diagnose: dict[str, Any]) -> bool:
+    normalized_browser = _normalize_fetch_browser(browser)
+    if normalized_browser != "chrome":
+        return False
+    if diagnose.get("ready"):
+        return False
+    if _needs_manual_browser_action(diagnose):
+        return False
+    if _has_browser_crash(diagnose) or _has_browser_instability(diagnose):
+        return True
+
+    combined = _combined_browser_text(diagnose)
+    soft_failure_signals = (
+        "subprocess 실행이",
+        "제한을 넘겨",
+        "연결 정보를 아직 찾지 못했습니다",
+        "원격 디버깅 포트에 연결하지 못했습니다",
+    )
+    return _has_signal(combined, soft_failure_signals)
+
+
+def _fallback_browsers(primary_browser: str, *, allow_chrome_fallback: bool) -> tuple[str, ...]:
+    if primary_browser == "chrome":
+        return ("chrome-visible", "firefox-visible")
+    if primary_browser == "chrome-visible":
+        return ("firefox-visible",)
+    if primary_browser == "firefox-visible" and allow_chrome_fallback:
+        return ("chrome",)
+    return ()
+
+
+def _should_try_browser_fallback(
+    primary_browser: str,
+    result: dict[str, Any],
+    *,
+    allow_chrome_fallback: bool,
+) -> bool:
+    if result.get("success"):
+        return False
+
+    if not _fallback_browsers(primary_browser, allow_chrome_fallback=allow_chrome_fallback):
+        return False
+
+    error = str(result.get("error") or "").strip()
+    text = str(result.get("text") or "").strip()
+    html = str(result.get("html") or "").strip()
+
+    if primary_browser in {"chrome", "chrome-visible"}:
+        return not text and not html
+
+    if (
+        error == "Firefox 일반 모드에서 기사 본문을 충분히 확보하지 못했습니다."
+        and not text
+        and not html
+    ):
+        return True
+
+    return _has_signal(error, FIREFOX_LAUNCH_FAILURE_SIGNALS) and not text and not html
+
+
+def _attempt_browser_fallbacks(
+    primary_result: dict[str, Any],
+    *,
+    primary_browser: str,
+    fallback_browsers: tuple[str, ...],
+    url: str,
+    timeout: int,
+    max_attempts: int,
+    lock_timeout: float,
+) -> dict[str, Any] | None:
+    attempts: list[dict[str, Any]] = []
+    for fallback_browser in fallback_browsers:
+        diagnose = _run_fetch_diagnose(browser=fallback_browser, lock_timeout=lock_timeout)
+        attempt: dict[str, Any] = {
+            "browser": fallback_browser,
+            "attempted": False,
+            "diagnose": diagnose,
+        }
+        if not diagnose.get("ready"):
+            attempts.append(attempt)
+            continue
+
+        fallback_result = _run_fetch_cli(
+            url,
+            browser=fallback_browser,
+            timeout=timeout,
+            max_attempts=max_attempts,
+            lock_timeout=lock_timeout,
+        )
+        fallback_result["fallback_from_browser"] = primary_browser
+        fallback_result["fallback_diagnose"] = diagnose
+        fallback_result["primary_failure"] = {
+            "browser": primary_browser,
+            "error": primary_result.get("error"),
+        }
+        fallback_result["harness_attempts"] = primary_result.get("harness_attempts", 1)
+        if fallback_result.get("success"):
+            fallback_result["fallback_chain"] = attempts + [
+                {
+                    "browser": fallback_browser,
+                    "attempted": True,
+                    "diagnose": diagnose,
+                    "result": {
+                        "success": True,
+                        "url": fallback_result.get("url"),
+                    },
+                }
+            ]
+            return fallback_result
+
+        attempt["attempted"] = True
+        attempt["result"] = fallback_result
+        attempts.append(attempt)
+
+    if attempts:
+        primary_result["browser_fallbacks"] = attempts
+        if primary_browser == "firefox-visible" and attempts[0].get("browser") == "chrome":
+            primary_result["chrome_fallback"] = attempts[0]
+    return None
+
+
 def fetch_article_with_harness(
     url: str,
     *,
-    browser: str = "chrome",
+    browser: str = _DEFAULT_FETCH_BROWSER,
     timeout: int = _DEFAULT_FETCH_TIMEOUT,
     max_attempts: int = _DEFAULT_FETCH_MAX_ATTEMPTS,
     lock_timeout: float = _DEFAULT_BROWSER_LOCK_TIMEOUT,
     harness_retries: int = 1,
     recovery_wait: float = _DEFAULT_HARNESS_RECOVERY_WAIT,
+    allow_chrome_fallback: bool = True,
+    close_after: bool = True,
 ) -> dict[str, Any]:
+    normalized_browser = _normalize_fetch_browser(browser)
     total_rounds = max(1, harness_retries + 1)
     latest_diagnose: dict[str, Any] | None = None
     last_result = _default_fetch_failure(url, "fetch가 시작되지 않았습니다.")
@@ -570,10 +880,11 @@ def fetch_article_with_harness(
     for round_index in range(1, total_rounds + 1):
         result = _run_fetch_cli(
             url,
-            browser=browser,
+            browser=normalized_browser,
             timeout=timeout,
             max_attempts=max_attempts,
             lock_timeout=lock_timeout,
+            close_after=close_after,
         )
         result["harness_attempts"] = round_index
         if latest_diagnose is not None and "diagnose" not in result:
@@ -586,16 +897,49 @@ def fetch_article_with_harness(
             break
         if _needs_manual_browser_action(result):
             break
-        if not _has_browser_instability(result):
+        if normalized_browser == "firefox-visible":
+            latest_diagnose = _run_fetch_diagnose(
+                browser=normalized_browser,
+                lock_timeout=lock_timeout,
+                close_after=close_after,
+            )
+            last_result["diagnose"] = latest_diagnose
+            if not latest_diagnose.get("ready"):
+                break
+        elif not _has_browser_instability(result):
             break
-
-        latest_diagnose = _run_fetch_diagnose(browser=browser, lock_timeout=lock_timeout)
-        last_result["diagnose"] = latest_diagnose
-        if _needs_manual_browser_action(latest_diagnose):
-            break
+        else:
+            latest_diagnose = _run_fetch_diagnose(
+                browser=normalized_browser,
+                lock_timeout=lock_timeout,
+                close_after=close_after,
+            )
+            last_result["diagnose"] = latest_diagnose
+            if _needs_manual_browser_action(latest_diagnose):
+                break
 
         if recovery_wait > 0:
             time.sleep(recovery_wait)
+
+    if _should_try_browser_fallback(
+        normalized_browser,
+        last_result,
+        allow_chrome_fallback=allow_chrome_fallback,
+    ):
+        fallback_result = _attempt_browser_fallbacks(
+            last_result,
+            primary_browser=normalized_browser,
+            fallback_browsers=_fallback_browsers(
+                normalized_browser,
+                allow_chrome_fallback=allow_chrome_fallback,
+            ),
+            url=url,
+            timeout=timeout,
+            max_attempts=max_attempts,
+            lock_timeout=lock_timeout,
+        )
+        if fallback_result is not None:
+            return fallback_result
 
     return last_result
 
@@ -603,53 +947,84 @@ def fetch_article_with_harness(
 def fetch_batch_with_harness(
     urls: list[str],
     *,
-    browser: str = "chrome",
+    browser: str = _DEFAULT_FETCH_BROWSER,
     timeout: int = _DEFAULT_FETCH_TIMEOUT,
     max_attempts: int = _DEFAULT_FETCH_MAX_ATTEMPTS,
     lock_timeout: float = _DEFAULT_BROWSER_LOCK_TIMEOUT,
     harness_retries: int = 1,
     recovery_wait: float = _DEFAULT_HARNESS_RECOVERY_WAIT,
+    allow_chrome_fallback: bool = False,
 ) -> dict[str, Any]:
-    preflight = _run_fetch_diagnose(browser=browser, lock_timeout=lock_timeout)
-    if not preflight.get("ready"):
-        results = [_preflight_failure_result(url, preflight) for url in urls]
-        requested = len(results)
-        return {
-            "ok": False,
-            "requested": requested,
-            "succeeded": 0,
-            "failed": requested,
-            "skipped_due_to_preflight": True,
-            "preflight": preflight,
-            "results": results,
-        }
+    normalized_browser = _normalize_fetch_browser(browser)
+    reuse_browser_session = normalized_browser in _SUPPORTED_FETCH_BROWSERS
+    cleanup: dict[str, Any] | None = None
+    report: dict[str, Any] = {}
+    preflight = _run_fetch_diagnose(
+        browser=normalized_browser,
+        lock_timeout=lock_timeout,
+        close_after=not reuse_browser_session,
+    )
+    preflight_degraded = False
+    try:
+        if not preflight.get("ready"):
+            if _should_degrade_preflight(normalized_browser, preflight):
+                preflight = dict(preflight)
+                preflight["degraded"] = True
+                preflight["degraded_reason"] = _diagnose_failure_detail(preflight)
+                preflight_degraded = True
+            else:
+                results = [_preflight_failure_result(url, preflight) for url in urls]
+                requested = len(results)
+                report = {
+                    "ok": False,
+                    "requested": requested,
+                    "succeeded": 0,
+                    "failed": requested,
+                    "skipped_due_to_preflight": True,
+                    "preflight": preflight,
+                    "preflight_degraded": False,
+                    "batch_browser_reused": reuse_browser_session,
+                    "results": results,
+                }
+        if not report:
+            results: list[dict[str, Any]] = []
+            for url in urls:
+                results.append(
+                    fetch_article_with_harness(
+                        url,
+                        browser=normalized_browser,
+                        timeout=timeout,
+                        max_attempts=max_attempts,
+                        lock_timeout=lock_timeout,
+                        harness_retries=harness_retries,
+                        recovery_wait=recovery_wait,
+                        allow_chrome_fallback=allow_chrome_fallback,
+                        close_after=not reuse_browser_session,
+                    )
+                )
 
-    results: list[dict[str, Any]] = []
-    for url in urls:
-        results.append(
-            fetch_article_with_harness(
-                url,
-                browser=browser,
-                timeout=timeout,
-                max_attempts=max_attempts,
+            succeeded = sum(1 for item in results if item.get("success"))
+            requested = len(results)
+            failed = requested - succeeded
+            report = {
+                "ok": failed == 0,
+                "requested": requested,
+                "succeeded": succeeded,
+                "failed": failed,
+                "skipped_due_to_preflight": False,
+                "preflight": preflight,
+                "preflight_degraded": preflight_degraded,
+                "batch_browser_reused": reuse_browser_session,
+                "results": results,
+            }
+    finally:
+        if reuse_browser_session:
+            cleanup = _run_browser_cleanup(
+                browser=normalized_browser,
                 lock_timeout=lock_timeout,
-                harness_retries=harness_retries,
-                recovery_wait=recovery_wait,
             )
-        )
-
-    succeeded = sum(1 for item in results if item.get("success"))
-    requested = len(results)
-    failed = requested - succeeded
-    return {
-        "ok": failed == 0,
-        "requested": requested,
-        "succeeded": succeeded,
-        "failed": failed,
-        "skipped_due_to_preflight": False,
-        "preflight": preflight,
-        "results": results,
-    }
+    report["cleanup"] = cleanup
+    return report
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -729,8 +1104,8 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch_article.add_argument("--url", required=True, help="수집할 기사 URL")
     fetch_article.add_argument(
         "--browser",
-        default="chrome",
-        choices=["chrome"],
+        default=_DEFAULT_FETCH_BROWSER,
+        choices=list(_SUPPORTED_FETCH_BROWSERS),
         help="본문 수집에 사용할 브라우저 (기본값: chrome)",
     )
     fetch_article.add_argument(
@@ -776,9 +1151,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fetch_batch.add_argument(
         "--browser",
-        default="chrome",
-        choices=["chrome"],
+        default=_DEFAULT_FETCH_BROWSER,
+        choices=list(_SUPPORTED_FETCH_BROWSERS),
         help="본문 수집에 사용할 브라우저 (기본값: chrome)",
+    )
+    fetch_batch.add_argument(
+        "--allow-chrome-fallback",
+        action="store_true",
+        help="주 브라우저 실패 시 보조 브라우저 폴백을 허용합니다. 기본값은 비활성화입니다.",
     )
     fetch_batch.add_argument(
         "--timeout",
@@ -924,6 +1304,7 @@ def _cmd_fetch_batch(args: argparse.Namespace) -> int:
         lock_timeout=max(0.0, args.lock_timeout),
         harness_retries=max(0, args.harness_retries),
         recovery_wait=max(0.0, args.recovery_wait),
+        allow_chrome_fallback=bool(args.allow_chrome_fallback),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
