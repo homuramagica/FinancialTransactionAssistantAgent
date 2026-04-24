@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,13 @@ ARTICLE_FILENAME_RE = re.compile(r"^\d{2}-\d{2}-\d{2} \d{2}-\d{2} .+\.md$")
 ERROR_FILENAME_RE = re.compile(r"^ERROR-\d{2}-\d{2}-\d{2} \d{2}-\d{2}\.md$")
 SOURCE_LINE_RE = re.compile(r"^\[출처: .+\]\(https?://.+\)$")
 SECTION_LINE_RE = re.compile(r"^(?P<emoji>\S+)\s+\*\*(?P<label>[^*]+):\*\*\s+.+$")
+FOOTER_AGENT_LINE_RE = re.compile(
+    r"^(?P<emoji>\S+)\s+이 문서는 금융 에이전트에서 작성됨\.$"
+)
+FOOTER_BLOCK_MESSAGE = (
+    "마지막 footer는 `\\n\\n&nbsp;\\n\\n{emoji} 이 문서는 금융 에이전트에서 작성됨.\\n"
+    "[출처: 매체명](URL)` 형식이어야 합니다."
+)
 TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$"
 )
@@ -75,6 +83,18 @@ _DEFAULT_FETCH_BROWSER = "chrome"
 _DEFAULT_FETCH_SUBPROCESS_GRACE = 20.0
 _DEFAULT_FETCH_LOCK_TIMEOUT_CAP = 10.0
 _DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT = 20.0
+_DEFAULT_MAX_AUTOMATION_LAG_MINUTES = 30.0
+
+_AUTOMATION_SCHEDULED_AT_ENV_KEYS = (
+    "CODEX_AUTOMATION_SCHEDULED_AT",
+    "AUTOMATION_SCHEDULED_AT",
+    "NEWS_FETCH_AUTOMATION_SCHEDULED_AT",
+)
+_AUTOMATION_ATTEMPTED_AT_ENV_KEYS = (
+    "CODEX_AUTOMATION_ATTEMPTED_AT",
+    "AUTOMATION_ATTEMPTED_AT",
+    "NEWS_FETCH_AUTOMATION_ATTEMPTED_AT",
+)
 
 BROWSER_INSTABILITY_SIGNALS = (
     "target page, context or browser has been closed",
@@ -184,6 +204,41 @@ def _find_intro_line(lines: list[str]) -> str | None:
     return None
 
 
+def _looks_like_emoji_token(token: str) -> bool:
+    return bool(token) and not any(char.isalnum() for char in token) and any(
+        ord(char) > 0x2000 for char in token
+    )
+
+
+def _validate_footer_block(lines: list[str], non_empty: list[str]) -> list[str]:
+    issues: list[str] = []
+
+    if not any("이 문서는 금융 에이전트에서 작성됨." in line for line in non_empty):
+        issues.append("마지막 금융 에이전트 표기가 없습니다.")
+
+    if not any(SOURCE_LINE_RE.match(line) for line in non_empty[-3:]):
+        issues.append("마지막 출처 링크가 없습니다.")
+
+    last_line = non_empty[-1] if non_empty else ""
+    if not SOURCE_LINE_RE.match(last_line):
+        issues.append("마지막 줄이 출처 링크로 끝나지 않습니다.")
+
+    footer_agent_match = FOOTER_AGENT_LINE_RE.match(lines[-2]) if len(lines) >= 2 else None
+    has_exact_footer_block = (
+        len(lines) >= 5
+        and lines[-5] == ""
+        and lines[-4] == "&nbsp;"
+        and lines[-3] == ""
+        and footer_agent_match is not None
+        and _looks_like_emoji_token(footer_agent_match.group("emoji"))
+        and bool(SOURCE_LINE_RE.match(lines[-1]))
+    )
+    if not has_exact_footer_block:
+        issues.append(FOOTER_BLOCK_MESSAGE)
+
+    return issues
+
+
 def validate_article_content(filename: str, content: str) -> list[str]:
     issues: list[str] = []
 
@@ -231,15 +286,7 @@ def validate_article_content(filename: str, content: str) -> list[str]:
     if len(bullet_lines) < 8:
         issues.append("세부 설명 리스트가 너무 적습니다.")
 
-    if "이 문서는 금융 에이전트에서 작성됨." not in stripped:
-        issues.append("마지막 금융 에이전트 표기가 없습니다.")
-
-    if not any(SOURCE_LINE_RE.match(line) for line in non_empty[-3:]):
-        issues.append("마지막 출처 링크가 없습니다.")
-
-    last_line = non_empty[-1]
-    if not SOURCE_LINE_RE.match(last_line):
-        issues.append("마지막 줄이 출처 링크로 끝나지 않습니다.")
+    issues.extend(_validate_footer_block(lines, non_empty))
 
     return issues
 
@@ -525,6 +572,112 @@ def _normalize_fetch_browser(browser: str | None) -> str:
             f"allowed={', '.join(_SUPPORTED_FETCH_BROWSERS)} requested={browser}"
         )
     return normalized
+
+
+def _first_env_value(keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def _parse_datetime(value: str) -> datetime:
+    raw = value.strip()
+    if not raw:
+        raise ValueError("빈 시각 값입니다.")
+
+    if re.fullmatch(r"\d{13}", raw):
+        return datetime.fromtimestamp(int(raw) / 1000, tz=timezone.utc)
+    if re.fullmatch(r"\d{10}", raw):
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+
+    normalized = raw.replace("Z", "+00:00")
+    if " " in normalized and "T" not in normalized:
+        normalized = normalized.replace(" ", "T", 1)
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return parsed
+
+
+def _datetime_for_report(value: datetime) -> str:
+    return value.astimezone().isoformat(timespec="seconds")
+
+
+def _automation_lag_guard_report(
+    *,
+    scheduled_at: str | None,
+    attempted_at: str | None,
+    max_lag_minutes: float,
+    enabled: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "enabled": bool(enabled),
+        "skipped": False,
+        "max_lag_minutes": max_lag_minutes,
+    }
+    if not enabled:
+        report["reason"] = "disabled"
+        return report
+
+    scheduled_raw = (
+        scheduled_at or _first_env_value(_AUTOMATION_SCHEDULED_AT_ENV_KEYS) or ""
+    ).strip()
+    if not scheduled_raw:
+        report["enabled"] = False
+        report["reason"] = "scheduled_at_missing"
+        return report
+
+    attempted_raw = (
+        attempted_at
+        or _first_env_value(_AUTOMATION_ATTEMPTED_AT_ENV_KEYS)
+        or datetime.now().astimezone().isoformat(timespec="seconds")
+    )
+
+    try:
+        scheduled_dt = _parse_datetime(scheduled_raw)
+        attempted_dt = _parse_datetime(attempted_raw)
+    except Exception as exc:
+        report.update(
+            {
+                "skipped": True,
+                "reason": "invalid_schedule_timestamp",
+                "scheduled_at_raw": scheduled_raw,
+                "attempted_at_raw": attempted_raw,
+                "detail": str(exc),
+            }
+        )
+        return report
+
+    lag_seconds = (attempted_dt - scheduled_dt).total_seconds()
+    max_lag_seconds = max(0.0, float(max_lag_minutes)) * 60.0
+    skipped = lag_seconds >= max_lag_seconds
+    report.update(
+        {
+            "scheduled_at": _datetime_for_report(scheduled_dt),
+            "attempted_at": _datetime_for_report(attempted_dt),
+            "lag_seconds": lag_seconds,
+            "lag_minutes": lag_seconds / 60.0,
+            "skipped": skipped,
+            "reason": "automation_queue_lag" if skipped else "within_lag_budget",
+        }
+    )
+    if skipped:
+        report["detail"] = (
+            "자동화 예약 시각과 기사 수집 시도 시각의 차이가 "
+            f"{max_lag_minutes:g}분 이상이라 수집을 시작하지 않았습니다."
+        )
+    return report
+
+
+def _automation_lag_skip_result(url: str, guard: dict[str, Any]) -> dict[str, Any]:
+    detail = str(guard.get("detail") or "자동화 큐 지연으로 기사 본문 수집을 건너뛰었습니다.")
+    result = _default_fetch_failure(url, detail)
+    result["harness_attempts"] = 0
+    result["skipped_by_automation_lag"] = True
+    result["automation_lag_guard"] = guard
+    return result
 
 
 def _fetch_script_path(browser: str) -> Path:
@@ -954,11 +1107,40 @@ def fetch_batch_with_harness(
     harness_retries: int = 1,
     recovery_wait: float = _DEFAULT_HARNESS_RECOVERY_WAIT,
     allow_chrome_fallback: bool = False,
+    automation_scheduled_at: str | None = None,
+    automation_attempted_at: str | None = None,
+    max_automation_lag_minutes: float = _DEFAULT_MAX_AUTOMATION_LAG_MINUTES,
+    automation_lag_guard: bool = True,
 ) -> dict[str, Any]:
     normalized_browser = _normalize_fetch_browser(browser)
     reuse_browser_session = normalized_browser in _SUPPORTED_FETCH_BROWSERS
     cleanup: dict[str, Any] | None = None
     report: dict[str, Any] = {}
+
+    lag_guard = _automation_lag_guard_report(
+        scheduled_at=automation_scheduled_at,
+        attempted_at=automation_attempted_at,
+        max_lag_minutes=max_automation_lag_minutes,
+        enabled=automation_lag_guard,
+    )
+    if lag_guard.get("skipped"):
+        results = [_automation_lag_skip_result(url, lag_guard) for url in urls]
+        return {
+            "ok": True,
+            "requested": len(results),
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": len(results),
+            "skipped_due_to_preflight": False,
+            "skipped_due_to_automation_lag": True,
+            "automation_lag_guard": lag_guard,
+            "preflight": None,
+            "preflight_degraded": False,
+            "batch_browser_reused": False,
+            "results": results,
+            "cleanup": None,
+        }
+
     preflight = _run_fetch_diagnose(
         browser=normalized_browser,
         lock_timeout=lock_timeout,
@@ -980,7 +1162,10 @@ def fetch_batch_with_harness(
                     "requested": requested,
                     "succeeded": 0,
                     "failed": requested,
+                    "skipped": 0,
                     "skipped_due_to_preflight": True,
+                    "skipped_due_to_automation_lag": False,
+                    "automation_lag_guard": lag_guard,
                     "preflight": preflight,
                     "preflight_degraded": False,
                     "batch_browser_reused": reuse_browser_session,
@@ -1011,7 +1196,10 @@ def fetch_batch_with_harness(
                 "requested": requested,
                 "succeeded": succeeded,
                 "failed": failed,
+                "skipped": 0,
                 "skipped_due_to_preflight": False,
+                "skipped_due_to_automation_lag": False,
+                "automation_lag_guard": lag_guard,
                 "preflight": preflight,
                 "preflight_degraded": preflight_degraded,
                 "batch_browser_reused": reuse_browser_session,
@@ -1190,6 +1378,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_HARNESS_RECOVERY_WAIT,
         help="복구 진단 뒤 다음 재시도 전 대기 시간(초)",
     )
+    fetch_batch.add_argument(
+        "--automation-scheduled-at",
+        default=None,
+        help=(
+            "자동화 예약 실행 시각(ISO-8601 또는 epoch). 이 값이 있으면 기사 수집 시작 전 "
+            "큐 지연 여부를 검사합니다."
+        ),
+    )
+    fetch_batch.add_argument(
+        "--automation-attempted-at",
+        default=None,
+        help="테스트/재현용 기사 수집 시도 시각(ISO-8601 또는 epoch). 기본값은 현재 시각입니다.",
+    )
+    fetch_batch.add_argument(
+        "--max-automation-lag-minutes",
+        type=float,
+        default=_DEFAULT_MAX_AUTOMATION_LAG_MINUTES,
+        help="자동화 예약 시각 대비 허용할 최대 기사 수집 지연 시간(분, 기본값: 30).",
+    )
+    fetch_batch.add_argument(
+        "--disable-automation-lag-guard",
+        action="store_true",
+        help="자동화 예약 시각 지연 가드를 비활성화합니다.",
+    )
 
     return parser
 
@@ -1305,6 +1517,10 @@ def _cmd_fetch_batch(args: argparse.Namespace) -> int:
         harness_retries=max(0, args.harness_retries),
         recovery_wait=max(0.0, args.recovery_wait),
         allow_chrome_fallback=bool(args.allow_chrome_fallback),
+        automation_scheduled_at=args.automation_scheduled_at,
+        automation_attempted_at=args.automation_attempted_at,
+        max_automation_lag_minutes=max(0.0, args.max_automation_lag_minutes),
+        automation_lag_guard=not bool(args.disable_automation_lag_guard),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1

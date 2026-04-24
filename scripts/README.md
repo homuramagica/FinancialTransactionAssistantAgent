@@ -139,7 +139,8 @@ python3 scripts/news_update_harness.py validate-manifest --manifest /tmp/news_ba
 python3 scripts/news_update_harness.py apply-manifest --manifest /tmp/news_batch.json --workspace .
 ```
 
-- 기사 본문은 기사 길이, Axios 전환구 형식, 리스트 밀도, 출처 링크, 금융 에이전트 표기를 검사한다.
+- 기사 본문은 기사 길이, Axios 전환구 형식, 리스트 밀도, 출처 링크, 금융 에이전트 표기와 footer 줄 간격을 검사한다.
+- footer는 파일 끝에서 `\n\n&nbsp;\n\n{emoji} 이 문서는 금융 에이전트에서 작성됨.\n[출처: 매체명](URL)` 형식이어야 한다.
 - 검증이 실패하면 기사 파일도, `.state.json`도 쓰지 않는다.
 
 ### 이미 생성한 기사 빠른 검사
@@ -155,6 +156,7 @@ python3 scripts/news_update_harness.py validate-files \
 ```bash
 python3 scripts/news_update_harness.py fetch-article --url "https://www.wsj.com/articles/example"
 python3 scripts/news_update_harness.py fetch-batch \
+  --automation-scheduled-at "2026-04-25T00:00:00+09:00" \
   --url "https://www.wsj.com/articles/example-1" \
   --url "https://www.barrons.com/articles/example-2"
 python3 scripts/news_update_harness.py fetch-article \
@@ -166,6 +168,7 @@ python3 scripts/news_update_harness.py fetch-article \
 - 기본값인 `chrome`은 `safari_fetch.py`의 Chrome DevTools 경로를 사용한다.
 - `chrome-visible`과 `firefox-visible`은 눈에 보이는 창으로만 조작하고, 본문 확보 후 탭을 닫은 뒤 앱도 종료한다.
 - `fetch-batch`는 URL별로 fetch subprocess를 새로 실행하지만, `chrome` 기본 경로와 `chrome-visible`/`firefox-visible` 명시 경로 모두 브라우저 세션 하나를 유지한 채 기사들을 순차 수집하고 배치 종료 직전에 한 번만 정리 종료한다.
+- 자동화 실행에서는 `--automation-scheduled-at`을 넘긴다. 예약 시각과 실제 기사 수집 시도 시각이 30분 이상 벌어지면 `skipped_due_to_automation_lag=true`로 브라우저 접근 전 정상 중단한다.
 - `fetch-batch`는 기본적으로 자동 브라우저 폴백을 끄고 진행해, 한 기사 실패 때문에 배치 전체가 오래 늘어지는 일을 줄인다. 필요할 때만 `--allow-chrome-fallback`을 명시한다.
 - `chrome` 경로에서는 DevTools 불안정 신호가 나오면 `--diagnose`를 자동 실행하고, 하네스 차원에서 1회 더 재시도한다.
 - 자동화에서는 Python 루프 안에서 `safari_fetch.py`나 `firefox_visible_fetch.py`를 직접 반복 호출하기보다 이 하네스를 우선 사용한다.

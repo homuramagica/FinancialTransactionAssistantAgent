@@ -44,6 +44,18 @@ VALID_ARTICLE = """# 🏦 은행주, 최악의 1분기 뒤 실적이 반전의 �
 
 
 INVALID_NBSP_SPACING_ARTICLE = VALID_ARTICLE.replace("\n\n&nbsp;\n\n", "\n&nbsp;\n")
+INVALID_FOOTER_ATTACHED_ARTICLE = VALID_ARTICLE.replace(
+    "\n\n&nbsp;\n\n💼 이 문서는 금융 에이전트에서 작성됨.",
+    "\n💼 이 문서는 금융 에이전트에서 작성됨.",
+)
+INVALID_FOOTER_MISSING_EMOJI_ARTICLE = VALID_ARTICLE.replace(
+    "💼 이 문서는 금융 에이전트에서 작성됨.",
+    "이 문서는 금융 에이전트에서 작성됨.",
+)
+INVALID_FOOTER_EXTRA_BLANK_ARTICLE = VALID_ARTICLE.replace(
+    "💼 이 문서는 금융 에이전트에서 작성됨.\n[출처:",
+    "💼 이 문서는 금융 에이전트에서 작성됨.\n\n[출처:",
+)
 
 
 BROKEN_ARTICLE = """# ⛽ 유가 120달러 재시험 경고가 나왔습니다
@@ -254,6 +266,30 @@ class NewsUpdateHarnessTests(unittest.TestCase):
             "`&nbsp;` 구분자는 앞뒤 빈 줄이 있는 `\\n\\n&nbsp;\\n\\n` 형식이어야 합니다.",
             issues,
         )
+
+    def test_validate_article_content_rejects_footer_attached_to_body(self) -> None:
+        issues = harness.validate_article_content(
+            "26-04-10 20-08 은행주, 최악의 1분기 뒤 실적이 반전의 시험대에 섰습니다.md",
+            INVALID_FOOTER_ATTACHED_ARTICLE,
+        )
+
+        self.assertIn(harness.FOOTER_BLOCK_MESSAGE, issues)
+
+    def test_validate_article_content_rejects_footer_without_emoji(self) -> None:
+        issues = harness.validate_article_content(
+            "26-04-10 20-08 은행주, 최악의 1분기 뒤 실적이 반전의 시험대에 섰습니다.md",
+            INVALID_FOOTER_MISSING_EMOJI_ARTICLE,
+        )
+
+        self.assertIn(harness.FOOTER_BLOCK_MESSAGE, issues)
+
+    def test_validate_article_content_rejects_footer_extra_blank_before_source(self) -> None:
+        issues = harness.validate_article_content(
+            "26-04-10 20-08 은행주, 최악의 1분기 뒤 실적이 반전의 시험대에 섰습니다.md",
+            INVALID_FOOTER_EXTRA_BLANK_ARTICLE,
+        )
+
+        self.assertIn(harness.FOOTER_BLOCK_MESSAGE, issues)
 
     def test_validate_article_content_rejects_thin_output_without_footer(self) -> None:
         issues = harness.validate_article_content(
@@ -517,6 +553,82 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         self.assertEqual(report["failed"], 1)
         self.assertFalse(report["skipped_due_to_preflight"])
         self.assertEqual(report["preflight"]["browser"], "chrome")
+
+    def test_fetch_batch_with_harness_skips_stale_automation_queue_before_browser_touch(self) -> None:
+        with mock.patch.object(harness, "_run_fetch_diagnose") as mock_diagnose, \
+             mock.patch.object(harness, "fetch_article_with_harness") as mock_fetch, \
+             mock.patch.object(harness, "_run_browser_cleanup") as mock_cleanup:
+            report = harness.fetch_batch_with_harness(
+                [
+                    "https://www.bloomberg.com/news/articles/a",
+                    "https://www.bloomberg.com/news/articles/b",
+                ],
+                automation_scheduled_at="2026-04-25T00:00:00+09:00",
+                automation_attempted_at="2026-04-25T00:30:00+09:00",
+                max_automation_lag_minutes=30,
+            )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["skipped_due_to_automation_lag"])
+        self.assertFalse(report["skipped_due_to_preflight"])
+        self.assertEqual(report["requested"], 2)
+        self.assertEqual(report["skipped"], 2)
+        self.assertEqual(report["failed"], 0)
+        self.assertEqual(report["preflight"], None)
+        self.assertEqual(report["cleanup"], None)
+        self.assertTrue(report["automation_lag_guard"]["skipped"])
+        self.assertEqual(mock_diagnose.call_count, 0)
+        self.assertEqual(mock_fetch.call_count, 0)
+        self.assertEqual(mock_cleanup.call_count, 0)
+
+    def test_fetch_batch_with_harness_allows_fresh_automation_queue(self) -> None:
+        with mock.patch.object(
+            harness,
+            "_run_fetch_diagnose",
+            return_value={"ready": True, "browser": "chrome"},
+        ), mock.patch.object(
+            harness,
+            "fetch_article_with_harness",
+            return_value={"success": True, "url": "https://example.com/a"},
+        ) as mock_fetch, mock.patch.object(
+            harness,
+            "_run_browser_cleanup",
+            return_value={"ok": True, "browser": "chrome", "closed": True},
+        ):
+            report = harness.fetch_batch_with_harness(
+                ["https://example.com/a"],
+                automation_scheduled_at="2026-04-25T00:00:00+09:00",
+                automation_attempted_at="2026-04-25T00:29:59+09:00",
+                max_automation_lag_minutes=30,
+            )
+
+        self.assertTrue(report["ok"])
+        self.assertFalse(report["skipped_due_to_automation_lag"])
+        self.assertEqual(report["automation_lag_guard"]["reason"], "within_lag_budget")
+        self.assertEqual(mock_fetch.call_count, 1)
+
+    def test_fetch_batch_main_command_skips_stale_automation_queue(self) -> None:
+        stdout = StringIO()
+        with mock.patch.object(harness, "_run_fetch_diagnose") as mock_diagnose:
+            with mock.patch("sys.stdout", stdout):
+                rc = harness.main(
+                    [
+                        "fetch-batch",
+                        "--url",
+                        "https://www.bloomberg.com/news/articles/a",
+                        "--automation-scheduled-at",
+                        "2026-04-25T00:00:00+09:00",
+                        "--automation-attempted-at",
+                        "2026-04-25T00:31:00+09:00",
+                    ]
+                )
+
+        self.assertEqual(rc, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["skipped_due_to_automation_lag"])
+        self.assertEqual(report["skipped"], 1)
+        self.assertEqual(mock_diagnose.call_count, 0)
 
     def test_fetch_batch_with_harness_short_circuits_on_preflight_failure(self) -> None:
         diagnose = {

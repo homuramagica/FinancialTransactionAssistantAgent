@@ -198,6 +198,76 @@
   - 26-04-23 00-26 💾 반도체 16연승은 AI 자본지출이 아직 끝나지 않았다는 선언입니다.md
   - 26-04-23 00-26 🧠 구글은 추론 전용 칩으로 AI 계산의 다음 전장을 겨냥합니다.md
   - 26-04-23 00-26 🇪🇺 이란 전쟁발 에너지 쇼크가 유로존 소비의 식탁부터 깎고 있습니다.md
+
+## 2026-04-24T04:44:28+09:00
+
+- action: Axios식 NewsUpdate 배치 12건 발행 (2차 selective publish)
+- selected_sources: Bloomberg 6건, WSJ 3건, Barron's 3건
+- published_files:
+  - 26-04-24 02-42 🧊 미국 국채는 전쟁과 지표 사이에서 2020년 이후 가장 조용한 한 달을 보내고 있습니다.md
+  - 26-04-24 02-42 💼 마이크로소프트는 AI 투자비를 감당하려고 미국 인력 7%에 퇴직 패키지를 제시합니다.md
+  - 26-04-24 02-42 🛢 미국 셰일 업계는 이란 전쟁이 유가보다 더 큰 운영 혼란을 만들고 있다고 말합니다.md
+  - 26-04-24 02-42 🍁 캐나다는 미국이 관세를 풀기 전까지 새 무역협정 협상을 서두르지 않겠다고 못 박았습니다.md
+  - 26-04-24 02-42 🌲 웨이어하우저는 숲 전체를 디지털 트윈으로 바꿔 AI를 목재 산업의 새 공장으로 만들려 합니다.md
+  - 26-04-24 02-42 🏗 유나이티드 렌털스는 인프라와 데이터센터 수요를 등에 업고 연간 가이던스를 끌어올렸습니다.md
+  - 26-04-24 04-22 ⚡ 지멘스에너지는 AI 전력 수요를 타고 올해 전망을 다시 높였습니다.md
+  - 26-04-24 04-22 🧠 미국은 중국의 AI 증류를 사실상 산업 스파이 문제로 격상했습니다.md
+  - 26-04-24 04-22 🛢 미국 비축유는 이제 자국 정유사만이 아니라 유럽의 전쟁 보험 역할까지 하고 있습니다.md
+  - 26-04-24 04-22 ✈️ 항공권과 수하물 요금 인상은 이란 전쟁의 연료 충격이 소비자에게 넘어갔다는 뜻입니다.md
+  - 26-04-24 04-22 🔌 넥스트에라는 AI 데이터센터 시대의 전기 종합상사로 재평가받고 있습니다.md
+  - 26-04-24 04-22 💾 텍사스인스트루먼트의 낙관론은 아날로그 반도체 바닥 통과 신호로 읽히고 있습니다.md
+- decision_notes:
+  - 1차 큐에서 Bloomberg 3건, WSJ 2건, Barron's 1건을 발행했고 apply 뒤 즉시 queue rerun으로 더 최신 후보 유입을 확인했습니다.
+
+## 2026-04-24T18:16:00+09:00
+
+- action: Axios식 NewsUpdate 배치 12건 발행 (초기 9건 + 2차 selective publish 3건)
+- selected_sources: Bloomberg 10건, WSJ 1건, Barron's 1건
+- published_files:
+  - 26-04-24 18-11 🚕 테슬라 사이버캡은 판매 둔화 속 로보택시 약속을 공장으로 옮겼습니다.md
+  - 26-04-24 18-11 🌾 Yara는 호르무즈 비료 병목을 실적 서프라이즈로 바꿨습니다.md
+  - 26-04-24 18-11 🛡 중국은 대만 무기 판매 유럽 기업에 수출통제 카드를 꺼냈습니다.md
+  - 26-04-24 18-11 🇨🇳 중국은 전쟁 첫 달에 재정지출을 오히려 줄였습니다.md
+  - 26-04-24 18-11 🇩🇪 독일 기업심리는 이란 전쟁 에너지 충격에 회복 기대를 잃었습니다.md
+  - 26-04-24 18-11 🚢 트럼프의 이란 봉쇄는 협상 압박과 유가 충격을 동시에 키웁니다.md
+  - 26-04-24 18-11 🇧🇪 벨기에 국채는 유럽 핵심 안전자산 지위에서 밀려나고 있습니다.md
+  - 26-04-24 18-11 🧊 유럽 LNG 수입 감소는 겨울 재고 보충 경쟁의 전조입니다.md
+  - 26-04-24 18-11 🧮 트럼프의 새 CEA 후보는 기술관료와 강경 보수 사이에 서 있습니다.md
+  - 26-04-24 18-16 🛢 유가 선물시장은 호르무즈 재고 공백을 아직 믿지 않고 있습니다.md
+  - 26-04-24 18-16 🚢 러시아 연계 유조선은 스웨덴 검문을 피해 항로를 바꾸고 있습니다.md
+  - 26-04-24 18-16 🇬🇧 영국 기업은 가격 인상을 더 보지만 임금 기대는 식고 있습니다.md
+- reviewed_but_skipped:
+  - WSJ 유가/독일 market-talk성 후보는 Bloomberg 본기사와 중복도가 높아 state head만 전진
+  - Barron's 유가 기사는 Bloomberg/WSJ 유가 흐름과 중복되어 state head만 전진
+- final_state:
+  - bloomberg: https://www.bloomberg.com/opinion/articles/2026-04-24/the-oil-futures-market-is-lying-to-us
+  - wsj: https://www.wsj.com/pro/central-banking/boe-survey-finds-inflation-expectations-rise-but-wage-outlook-cools-f5963d74
+  - barrons: https://www.barrons.com/articles/oil-prices-today-trump-gas-iran-16c4ea78
+  - last_run_kst: 2026-04-24T18:16:00+09:00
+- verification:
+  - Chrome DevTools fetch-batch ok x3, preflight_degraded=false
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-files ok for 12 new articles
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 20분
+
+  - 2차 큐에서는 AI 전력, AI 규제, 비축유, 항공 연료비, 유틸리티, 아날로그 반도체 회복 기사만 추가 발행했습니다.
+  - 각 라운드마다 reviewed head 기준으로 state를 전진시켜 같은 저밀도/중복 후보가 다음 런에 재등장하지 않도록 정리했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/blackstone-s-secondaries-unit-hits-100-billion-as-demand-grows
+  - wsj: https://www.wsj.com/tech/ai/extraterrestrial-alien-life-research-changes-03278e0f
+  - barrons: https://www.barrons.com/articles/nextera-energy-hits-record-high-electricity-sweet-spot-7cd95a17
+  - last_run_kst: 2026-04-24T04:22:32+09:00
+- remaining_queue:
+  - apply 직후에도 Bloomberg 23건, WSJ 9건, Barron's 5건이 다시 열렸지만 이는 2차 반영 시점 이후에 새로 올라온 헤드라인으로 판단해 이번 런에서는 추가 추격하지 않았습니다.
+- verification:
+  - fetch-batch ok x2
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir ok
+  - news_update_queue rerun ok x2
+- runtime: 약 3시간 35분
   - 26-04-23 00-26 🇨🇦 캐나다는 자동차와 금속 관세 완화 없이는 북미 무역협정을 못 연장한다고 버팁니다.md
   - 26-04-23 00-26 ⚡ 버티브는 AI 인프라 실적을 이겼지만 주가는 너무 높았던 기대와 싸웁니다.md
   - 26-04-23 00-29 🏢 웰스파고는 영국 부동산 대출 공백에 들어갔다가 MFS 붕괴권에 묶였습니다.md
@@ -218,6 +288,42 @@
   - counsel_memory_cli prepare-turn ok
   - world_memory_cli list --days 21 ok
   - fetch-batch ok x3
+
+## 2026-04-23T18:15:00+09:00
+
+- action: Axios식 NewsUpdate 배치 7건 발행 + state-only 정리 2회
+- selected_sources: Bloomberg 5건, WSJ 2건, Barron's 0건
+- published_files:
+  - 26-04-23 18-10 💼 홍콩은 에버그란데 청구서를 PwC에 보냈습니다.md
+  - 26-04-23 18-10 🇬🇧 영국 기업들은 전쟁발 공급불안 앞에서 재고부터 쌓고 있습니다.md
+  - 26-04-23 18-10 🌾 중국은 비료 시장을 붙들어 글로벌 농산물 충격을 늦추려 합니다.md
+  - 26-04-23 18-10 ☀️ 중국 태양광 증설은 급감했지만 수출은 더 세게 밀어냈습니다.md
+  - 26-04-23 18-10 🚨 휴전 연장보다 더 중요한 것은 호르무즈 봉쇄가 풀리지 않았다는 점입니다.md
+  - 26-04-23 18-10 🇵🇭 필리핀 중앙은행은 전쟁발 물가를 막으려 다시 금리를 올렸습니다.md
+  - 26-04-23 18-10 🏭 세계 공장들은 선주문으로 버티지만 유로존 서비스업은 먼저 꺾였습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Warsh opinion / AI podcast / South Africa weight-loss drugs / Baltics bond / Tesla opinion / 인도 선거 newsletter / 나이지리아 전력 인사 / 노르웨이 국부펀드 / Lufthansa aid ruling / Deutsche Telekom deal / Google search feature / insider-trading fugitive / Odd Lots podcast / eurozone PMI는 중복 또는 우선순위 열위로 headline review만 반영
+  - WSJ oil market talk와 House Majority PAC midterm ads는 중복 또는 시장 직접성 부족으로 headline review만 반영
+  - Barron's Nestle, Barron's Hormuz oil price update는 본문 밀도와 중복도 기준으로 기사화하지 않고 reviewed head만 반영
+- manifests:
+  - tmp/automation_news_manifest_20260423_1810.json
+  - tmp/automation_news_state_fix_20260423_1814.json
+  - tmp/automation_news_state_fix_20260423_1815_barrons.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/opinion/articles/2026-04-23/fed-confirmation-warsh-s-inflation-critique-ignores-some-basic-facts
+  - wsj: https://www.wsj.com/politics/elections/democrats-ad-plans-show-party-going-on-offense-d5a15d84
+  - barrons: https://www.barrons.com/articles/oil-prices-today-brent-wti-iran-adc6596b
+  - last_run_kst: 2026-04-23T18:15:00+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok x2, preflight_degraded=false
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-dir ok
+  - state-only validate/apply ok x2
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 12분 30초
 
 ## 2026-04-23T09:11:35+09:00
 
@@ -259,6 +365,43 @@
   - apply-manifest ok x2
   - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
 - runtime: 약 12분
+
+## 2026-04-24T20:16:05+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행
+- result: 총 11건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 8건, WSJ 2건, Barron's 1건
+- published_articles:
+  - 26-04-24 20-11 🛢 이란은 미국 봉쇄 속에서도 유조선에 원유를 계속 싣고 있습니다.md
+  - 26-04-24 20-11 🇷🇺 러시아는 전쟁 리스크 속 금리를 14.5퍼센트로 낮췄습니다.md
+  - 26-04-24 20-11 🇨🇴 콜롬비아는 70억달러 연금 이전으로 채권시장 충격을 키웁니다.md
+  - 26-04-24 20-11 ⛏ 전쟁은 디젤과 황산을 조여 글로벌 광산 비용을 흔들고 있습니다.md
+  - 26-04-24 20-11 🇪🇺 ECB 내부에선 이란 전쟁이 금리 인상 논의까지 되살리고 있습니다.md
+  - 26-04-24 20-11 🔋 AI 데이터센터는 배터리를 가스발전의 파트너로 쓰기 시작했습니다.md
+  - 26-04-24 20-11 📉 월가는 호르무즈 봉쇄를 팬데믹 초입처럼 과소평가하고 있습니다.md
+  - 26-04-24 20-11 🇩🇪 독일 기업심리는 전쟁발 에너지 충격에 2020년 이후 최저로 꺾였습니다.md
+  - 26-04-24 20-14 🧾 Mars FX 붕괴는 6억달러 현금 추적전으로 번졌습니다.md
+  - 26-04-24 20-14 🇪🇺 부유한 EU 회원국들은 2조1000억달러 예산안에 제동을 걸고 있습니다.md
+  - 26-04-24 20-14 🇹🇼 TSMC 현지주 사상 최고가는 미국 ADR 투자자에게 그대로 오지 않습니다.md
+- reviewed_but_skipped:
+  - Bloomberg BOE survey는 18:16 WSJ BOE 기사와 중복도가 높아 기사화하지 않음.
+  - Bloomberg PIMCO Gulf debt newsletter는 subscriber-only 단문이라 state head로만 정리.
+  - Bloomberg Europe privacy/children, pistachio newsletter, airline antitrust opinion, oil producer newsletter는 시장 직접성·본문 밀도 이유로 보류.
+  - WSJ Russia rate item은 Bloomberg Russia 기사와 중복되어 state head로만 정리.
+  - Barron's Meta layoffs daily aggregate는 AI 인력감축 중복과 집계형 성격 때문에 기사화하지 않고 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-24/pimco-s-secret-gulf-debt-deals-show-power-of-private-placements
+  - wsj: https://www.wsj.com/pro/central-banking/russias-central-bank-continues-to-cut-rates-bcb98de3
+  - barrons: https://www.barrons.com/articles/tsmc-stock-price-taiwan-semi-adr-58a9ff51
+  - last_run_kst: 2026-04-24T20:14:39+09:00
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - Chrome DevTools fetch-batch ok: Bloomberg 7/7, Dow Jones 3/3, Bloomberg second 3/3, Barron's second 1/1
+  - validate-manifest ok x2, apply-manifest ok x2
+  - validate-files ok for 11 published articles after shortening 2 filenames that hit macOS filename length truncation
+  - news_update_queue final rerun ok with Bloomberg/WSJ/Barron's all 0
+- runtime: 약 16분
 
 ## 2026-04-23T01:42:51+09:00
 
@@ -328,6 +471,70 @@
   - apply-manifest ok x3
   - validate-dir ok x3
   - news_update_queue rerun ok x3 (최종 Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 10분
+
+## 2026-04-23T17:11:40+09:00
+
+- action: Axios식 NewsUpdate 배치 5건 발행 + state-only 정리 1회
+- selected_sources: Bloomberg 4건, Barron's 1건, WSJ 0건
+- published_files:
+  - 26-04-23 17-07 🔋 양저우 나노포어의 홍콩 IPO는 배터리 소재 자금줄이 다시 중국으로 열리고 있음을 보여줍니다.md
+  - 26-04-23 17-07 🇩🇪 독일 서비스 경기 급랭은 이란 전쟁이 유럽 내수부터 먼저 찍고 있음을 보여줍니다.md
+  - 26-04-23 17-07 💾 키옥시아의 10대 시총 진입은 AI 메모리 랠리가 일본 증시 판도까지 바꾸고 있습니다.md
+  - 26-04-23 17-07 🏦 UBS AT1 채권 반등은 스위스가 대형은행 자본규제의 선을 다시 그었다는 뜻입니다.md
+  - 26-04-23 17-11 🤖 엔비디아 주가가 구글의 새 TPU를 흘려보낸 건 AI 칩 전쟁의 룰이 이미 바뀌었기 때문입니다.md
+- reviewed_but_skipped:
+  - Bloomberg GOP DHS funding, UK borrowing newsletter, 프랑스 PMI, 에티오피아 거래소 상장은 핵심 테마 대비 우선순위가 낮거나 독일 PMI와 중복돼 state head로만 정리
+  - Bloomberg Africa infrastructure funding article은 본문 밀도는 충분했지만 이번 런 핵심 테마 대비 우선순위가 낮아 state-only로 정리
+  - Barron's Bitcoin/XRP, AT&T 배당 해설은 기사화하지 않고 reviewed head 기준으로 state 반영
+- manifests:
+  - tmp/automation_news_manifest_20260423_1707.json
+  - tmp/automation_news_manifest_20260423_1711_second.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/africa-s-4-trillion-challenge-is-better-deployment-afc-says
+  - wsj: https://www.wsj.com/finance/currencies/asian-currencies-consolidate-u-s-iran-tensions-could-weigh-d22b21b0
+  - barrons: https://www.barrons.com/articles/bitcoin-xrp-ethereum-crypto-iran-54088134
+  - last_run_kst: 2026-04-23T17:11:40+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok x3 (Chrome DevTools, preflight_degraded=false)
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir ok
+  - news_update_queue rerun ok x2 (최종 Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 10분
+
+## 2026-04-23T19:11:06+09:00
+
+- action: Axios식 NewsUpdate 배치 4건 발행 + Bloomberg 2차 selective publish 1건
+- selected_sources: Bloomberg 4건, WSJ 1건, Barron's 0건
+- published_files:
+  - 26-04-23 19-07 🇹🇼 대만의 펀드 규제 완화는 TSMC 쏠림을 제도권 자금으로 더 키우겠다는 뜻입니다.md
+  - 26-04-23 19-07 🤖 마이크로소프트의 다음 시험은 Copilot이 정말 돈이 되느냐입니다.md
+  - 26-04-23 19-07 🌙 인도 전력 가격 급등은 태양광 시대에도 밤 전력은 아직 부족하다는 뜻입니다.md
+  - 26-04-23 19-07 🏷 중국의 신용등급 손질은 AAA 남발을 더는 못 두겠다는 신호입니다.md
+  - 26-04-23 19-11 🏭 중국의 새 공급망 규칙은 리쇼어링 압박에 법으로 맞불을 놓겠다는 뜻입니다.md
+- reviewed_but_skipped:
+  - Bloomberg 유럽 제트연료, 인텔 실적 장벽, WSJ 글로벌 공장 PMI 기사는 이미 발행본이 있어 중복 제외
+  - Bloomberg UniCredit/Thai IPO/Honeywell, WSJ DNB·주택시장, Barron's movers는 headline/body review 후 이번 런 우선순위에서 제외
+  - 1차 apply 뒤 새로 열린 Bloomberg 5건 중 중국 공급망 규칙 1건만 추가 기사화하고, 나머지 4건은 reviewed head 기준으로 state 정리
+- manifests:
+  - tmp/automation_news_manifest_20260423_1907.json
+  - tmp/automation_news_manifest_20260423_1911_second.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/features/2026-04-23/trump-critic-thomas-massie-faces-primary-challenge-in-kentucky
+  - wsj: https://www.wsj.com/finance/banking/norways-dnb-bank-posts-softer-profit-aff060ba
+  - barrons: https://www.barrons.com/articles/stock-movers-d9e05928
+  - last_run_kst: 2026-04-23T19:11:06+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok x5 (Chrome DevTools)
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-files ok x2
+  - news_update_queue rerun ok x2 (최종 Bloomberg/WSJ/Barron's 모두 0건)
 - runtime: 약 10분
 
 - action: Axios식 NewsUpdate 배치 4건 발행
@@ -568,3 +775,541 @@
   - apply-manifest ok x2
   - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
 - runtime: 약 8분
+
+## 2026-04-23T14:11:50+09:00
+
+- action: Axios식 NewsUpdate 배치 6건 발행 + 2차 selective publish 1회
+- selected_sources: Bloomberg 5건, WSJ 1건, Barron's 0건
+- published_files:
+  - 26-04-23 14-07 🇨🇳 위안 옵션 거래는 엔화를 밀어내고 달러 다음 자리를 노립니다.md
+  - 26-04-23 14-07 ⛽ 파키스탄은 전쟁발 가스 쇼크를 막으려 다시 현물 LNG를 찾고 있습니다.md
+  - 26-04-23 14-07 📈 전쟁이 이어져도 주가가 버티는 데에는 다섯 가지 버팀목이 있습니다.md
+  - 26-04-23 14-07 🤖 다음 AI 승부는 챗봇이 아니라 물리 세계를 이해하는 월드 모델입니다.md
+  - 26-04-23 14-10 🚗 르노는 다치아 흔들림 속에서도 금융과 전기차로 실적을 지켜냈습니다.md
+  - 26-04-23 14-10 🧠 딥시크는 첫 외부 투자 유치로 중국 AI 판의 가격표를 다시 쓰려 합니다.md
+- reviewed_but_skipped:
+  - Bloomberg Africa summit, Pakistan LNG 외 나머지 상단 후보와 BCG AI revenue 기사는 headline/body review 후 이번 런 우선순위에서 제외
+  - WSJ 아시아 통화 마켓톡은 얇은 market talk 묶음이라 기사화하지 않고 state head로만 정리
+- manifests:
+  - tmp/automation_news_manifest_20260423_1407.json
+  - tmp/automation_news_manifest_20260423_1410_second.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/renault-revenue-gains-despite-bad-weather-impact-for-dacia
+  - wsj: https://www.wsj.com/finance/currencies/asian-currencies-consolidate-u-s-iran-tensions-could-weigh-d22b21b0
+  - barrons: https://www.barrons.com/articles/buy-ferguson-stock-price-pick-3f4a3858
+  - last_run_kst: 2026-04-23T14:10:28+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - Bloomberg fetch-batch ok (5건)
+  - Bloomberg fetch-article ok (Renault)
+  - Dow Jones fetch-batch ok (2건)
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir ok (6 articles)
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 10분
+
+## 2026-04-23T15:15:13+09:00
+
+- action: Axios식 NewsUpdate 배치 7건 발행 + 2차 selective publish 1회
+- selected_sources: Bloomberg 6건, Barron's 1건, WSJ 0건
+- published_files:
+  - 26-04-23 15-08 🇮🇳 인도의 4월 PMI 반등은 전쟁 충격 아래서도 제조업 버팀목이 살아 있음을 보여줍니다.md
+  - 26-04-23 15-08 🚗 현대차는 관세와 전기차 둔화, 전쟁발 비용 압박을 한꺼번에 맞고 있습니다.md
+  - 26-04-23 15-08 🤖 노키아의 AI 피벗은 통신장비 회사를 데이터센터 배관업체로 바꿉니다.md
+  - 26-04-23 15-08 🇹🇼 대만 금융권은 글로벌 AI 대신 자국형 금융 LLM을 직접 세우려 합니다.md
+  - 26-04-23 15-08 🇯🇵 돈키호테의 로빈후드는 일본 물가 시대의 할인 유통 실험입니다.md
+  - 26-04-23 15-12 🏙 두바이 집값의 첫 하락은 중동 전쟁이 자산 피난처 서사까지 흔들기 시작했음을 뜻합니다.md
+  - 26-04-23 15-12 ✈️ 유럽 제트연료 부족은 중동 전쟁이 올여름 항공편을 직접 줄이기 시작했음을 보여줍니다.md
+- reviewed_but_skipped:
+  - Bloomberg CBA AI 감원 기사는 본문이 너무 짧아 제외
+  - WSJ 금리/아시아증시 기사 2건은 마켓톡 성격이 강해 state head로만 정리
+  - Bloomberg Sanofi, Heineken, Roche, Nestle, Safran 등은 headline review 후 이번 런 우선순위에서 제외
+- manifests:
+  - /tmp/automation_news_manifest_20260423_1508.json
+  - /tmp/automation_news_manifest_20260423_1512_second.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/dubai-home-prices-post-first-declines-after-post-pandemic-boom
+  - wsj: https://www.wsj.com/finance/investing/jgbs-consolidate-as-investors-focus-on-middle-east-developments-d9998f54
+  - barrons: https://www.barrons.com/articles/jet-fuel-shortage-europe-summer-travel-airlines-9f3eaa75
+  - last_run_kst: 2026-04-23T15:12:54+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok x3
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 15분
+
+## 2026-04-23T23:08:29+09:00
+
+- action: Axios식 NewsUpdate 배치 5건 발행 + 2차 selective publish 1회
+- selected_sources: Bloomberg 3건, WSJ 1건, Barron's 1건
+- published_files:
+  - 26-04-23 23-09 🤖 유럽연합은 안드로이드의 AI 기본값 전쟁을 구글 혼자 못 하게 만들려 합니다.md
+  - 26-04-23 23-09 🇬🇧 영국 소비심리의 2023년 이후 최저치는 전쟁 비용이 가계로 들어왔다는 뜻입니다.md
+  - 26-04-23 23-09 ⛽ 캐나다 생산자물가 급등은 호르무즈 충격이 북미 공장 원가까지 번졌음을 보여줍니다.md
+  - 26-04-23 23-09 ⛏ 프리포트 주가 급락은 구리 강세장에서도 생산 차질이 더 큰 리스크임을 보여줍니다.md
+  - 26-04-23 23-11 🏦 은행들이 사모신용으로 다시 몰리는 건 위험이 아니라 가격이 바뀌었기 때문입니다.md
+- reviewed_but_skipped:
+  - Bloomberg Ingenico debt, Vail snow, New Mountain secondaries, South Africa reform, Ukraine/EU, Hungary/Russia, UK health-data breach, Goldman/Leissner, Brazil flow, Xiaomi supercar는 headline review 후 이번 런 우선순위에서 제외
+- manifests:
+  - /tmp/automation_news_manifest_20260423_2309.json
+  - /tmp/automation_news_manifest_20260423_2311_second.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-23/bankers-are-newly-bullish-on-private-credit-despite-dings-and-dents
+  - wsj: https://www.wsj.com/finance/commodities-futures/canada-producer-prices-rise-in-march-d9620732
+  - barrons: https://www.barrons.com/articles/freeport-mcmoran-earnings-stock-price-9b3f1bcd
+  - last_run_kst: 2026-04-23T23:08:29+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok (Bloomberg 2 + WSJ 1 + Barron's 1)
+  - fetch-article ok (Bloomberg Banking Monitor)
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir ok x2
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 7분
+
+
+## 2026-04-24T00:11:17+09:00
+
+- action: Axios식 NewsUpdate 배치 6건 발행
+- selected_sources: Bloomberg 4건, WSJ 2건, Barron's 0건
+- published_files:
+  - 26-04-24 00-08 🇨🇦 캐나다의 2360만배럴 약속은 새 증산보다 기존 증산분의 재분류에 가깝습니다.md
+  - 26-04-24 00-08 💵 핌코는 전쟁 채권의 비공개 창구로 걸프의 현금 완충을 대고 있습니다.md
+  - 26-04-24 00-08 🧠 블랙스톤은 AI 인프라를 회사 전체를 끄는 가장 큰 엔진으로 선언했습니다.md
+  - 26-04-24 00-08 🚗 테슬라는 자율주행을 약속했던 구형 차량에 뒤늦은 하드웨어 구제를 제시했습니다.md
+  - 26-04-24 00-08 🏭 공장들은 공급 부족을 겁내며 앞당겨 주문하지만 유로존 전체는 더 약해졌습니다.md
+  - 26-04-24 00-10 🇨🇦 CAAT연금의 8.4퍼센트 수익률은 주식이 사모자산의 구멍을 메운 한 해였습니다.md
+- reviewed_but_skipped:
+  - Barron's Hims GLP-1 기사는 본문 확보는 됐지만 이번 런 핵심 테마 대비 밀도가 상대적으로 약해 기사화하지 않고 reviewed head 기준으로 state만 반영
+  - Bloomberg Warner/medical devices/Avis 등은 headline review 후 이번 런 우선순위에서 제외
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/caat-pension-earns-8-4-as-stock-gains-outweigh-weak-pe-returns
+  - wsj: https://www.wsj.com/business/autos/tesla-promises-upgrade-for-customers-who-bought-cars-that-cant-drive-autonomously-acc431d0
+  - barrons: https://www.barrons.com/articles/hims-yields-ground-in-glp-1-market-pharma-a82cab55
+  - last_run_kst: 2026-04-24T00:10:40+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok x2, fetch-article ok x1
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir ok
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 10분
+
+
+## 2026-04-24T06:23:21+09:00
+
+- action: Axios식 NewsUpdate 배치 8건 발행 + state 경계 수동 보정
+- selected_sources: Bloomberg 4건, WSJ 1건, Barron's 3건
+- published_files:
+  - 26-04-24 04-22 🧠 오픈AI는 GPT-5.5로 적은 지시만 받아도 일을 끝내는 AI를 밀어붙입니다.md
+  - 26-04-24 04-22 🛡 미국은 중국의 AI 모방 학습을 산업보안 전선으로 끌어올렸습니다.md
+  - 26-04-24 04-22 ⚡ 지멘스에너지는 AI 전력 붐 덕분에 올해 가이던스를 다시 올렸습니다.md
+  - 26-04-24 04-22 🚢 미국 비축유 방출은 이제 유럽과 아시아까지 전쟁 구멍을 메우는 흐름이 됐습니다.md
+  - 26-04-24 04-22 ✈️ 미국 항공사들은 전쟁발 제트연료 급등을 운임 인상과 감편으로 넘기고 있습니다.md
+  - 26-04-24 04-22 🧪 황 공급 쇼크는 이제 비료와 구리와 반도체까지 흔들고 있습니다.md
+  - 26-04-24 04-22 🔌 넥스트에라는 AI 데이터센터 전력 수요를 업고 새 고점을 향해 뛰고 있습니다.md
+  - 26-04-24 04-22 💾 텍사스인스트루먼트의 낙관론은 아날로그 반도체 회복을 업계 전체로 번지게 했습니다.md
+- reviewed_but_skipped:
+  - WSJ `Microsoft Offers Buyouts`는 Bloomberg판으로 이미 같은 테마를 발행한 중복 이슈라 새 기사로 다시 쓰지 않음
+  - Bloomberg 상단과 WSJ/Barron's 다수 후보는 이번 런 후반에 더 새 헤드라인이 열려 다음 배치 대상으로 남김
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/openai-unveils-gpt-5-5-to-field-tasks-with-limited-instructions
+  - wsj: https://www.wsj.com/tech/microsoft-offers-buyouts-to-7-of-workforce-755b8534
+  - barrons: https://www.barrons.com/articles/global-sulfur-shortage-prices-soaring-iran-war-c8d122a8
+  - last_run_kst: 2026-04-24T04:22:32+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - existing fetch artifacts reused: `tmp/automation_fetch_20260424_current.json`, `tmp/automation_fetch_20260424_round2.json`
+  - fetch-article ok: Bloomberg OpenAI GPT-5.5, Barron's sulfur shortage
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok (8 articles)
+  - note: `apply-manifest` 뒤 `.state.json`이 manifest 값보다 뒤 URL로 기록돼 published item이 재등장했고, 이번 런에서는 `.state.json`을 직접 패치해 경계를 바로잡음
+- remaining_queue:
+  - Bloomberg 31건, WSJ 9건, Barron's 6건이 남아 있으며 대부분은 04:22 KST 이후 새로 열린 헤드라인
+- runtime: 약 3시간 11분
+
+## 2026-04-24T10:53:51+09:00
+
+- action: Axios식 NewsUpdate 배치 5건 발행 + 오류 보고서 1건 기록
+- selected_sources: Bloomberg 3건, WSJ 1건, Barron's 1건
+- published_files:
+  - 26-04-24 10-53 🇯🇵 일본 물가는 유가와 엔저를 타고 BOJ 6월 인상론을 다시 키웁니다.md
+  - 26-04-24 10-53 🚗 BYD 할인 경쟁은 중국 EV 가격전쟁이 끝나지 않았다는 신호입니다.md
+  - 26-04-24 10-53 ☁️ SAP는 AI 에이전트를 얹은 클라우드 성장으로 유럽 소프트웨어 회의론을 되받아칩니다.md
+  - 26-04-24 10-53 🛰 중국 상업위성 데이터는 중동 전장을 넘어 미국 안보 불안의 새 변수로 떠오릅니다.md
+  - 26-04-24 10-53 🔌 킨더모건은 3.8% 배당과 AI 전력 수요를 함께 파는 가스 파이프라인으로 재평가됩니다.md
+- error_reports:
+  - ERROR-26-04-24 10-53.md (Bloomberg 중국 수출업체 가격 인상 기사 robot block)
+- decision_notes:
+  - current queue 기준 Bloomberg 일본 CPI와 BYD 가격전쟁은 본문 확보에 성공해 발행
+  - Bloomberg 중국 수출업체 가격 인상 기사는 재시도했지만 robot block이 반환돼 오류 보고서만 남김
+  - 워크스페이스 로컬 자동화 메모와 NewsUpdate 목록을 먼저 대조해 04:22/08:51에 이미 발행된 OpenAI, 황 공급 쇼크, Intel 등을 중복 발행하지 않음
+  - WSJ 중국 상업위성 기사와 Barron's Kinder Morgan, Bloomberg SAP fetch artifact를 재사용해 미발행 원고만 추가 발행
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/japan-s-inflation-picks-up-as-oil-clouds-outlook-ahead-of-boj
+  - wsj: https://www.wsj.com/business/ackmans-pershing-square-inc-to-sell-up-to-33-12-million-shares-in-ipo-fe2b8a72
+  - barrons: https://www.barrons.com/articles/atlanta-braves-stock-offers-upside-padres-near-sale-d52c1a7c
+  - last_run_kst: 2026-04-24T10:53:51+09:00
+- verification:
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-dir ok (articles)
+  - validate-dir ok (error report)
+  - news_update_queue rerun ok
+- remaining_queue:
+  - rerun 직후 새 헤드라인 유입으로 Bloomberg 13건, WSJ 12건, Barron's 1건이 남음
+- runtime: 약 45분
+
+## 2026-04-24T09:26:36+09:00
+
+- action: 동시 실행 흔적 정리 + 최신 state 재확인
+- observed_publish:
+  - 26-04-24 07-30 라운드 9건과 26-04-24 08-51 라운드 3건이 실제로 이미 반영되어 있었음
+  - 08-51 신규 발행 파일:
+    - 26-04-24 08-51 🇰🇷 한국 반도체 보너스 90만달러 시대는 AI 붐의 그늘을 함께 키웁니다.md
+    - 26-04-24 08-51 💻 인텔은 AI 에이전트 덕분에 다시 CPU의 시대를 불러오고 있습니다.md
+    - 26-04-24 08-51 🔋 소프트뱅크는 AI 데이터센터 전력을 위해 배터리 공장까지 직접 짓습니다.md
+- current_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/trump-says-he-ll-look-into-federal-worker-prediction-market-bets
+  - wsj: https://www.wsj.com/business/ackmans-pershing-square-inc-to-sell-up-to-33-12-million-shares-in-ipo-fe2b8a72
+  - barrons: https://www.barrons.com/articles/atlanta-braves-stock-offers-upside-padres-near-sale-d52c1a7c
+  - last_run_kst: 2026-04-24T08:51:01+09:00
+- decision_notes:
+  - Chrome fetch 하네스가 중첩 락으로 길게 붙는 현상이 반복돼 추가 selective publish는 중단하고 남은 큐만 재확인함
+  - stale manifest가 state를 뒤로 밀 가능성이 있어 07-30 이전 초안은 재사용하지 않음
+  - 다음 우선 후보는 Bloomberg 일본 CPI, Bloomberg 중국 수출업체발 인플레, WSJ 호르무즈 봉쇄 기사로 판단
+- remaining_queue:
+  - Bloomberg 12건, WSJ 8건, Barron's 1건
+  - Barron's 잔여 1건은 review/preview 성격이라 후순위
+- cleanup:
+  - 중복 실행 중이던 fetch-batch / safari_fetch 프로세스를 정리하고 0바이트 임시 결과 파일을 삭제함
+- runtime: 약 3시간 03분
+
+## 2026-04-24T09:07:10+09:00
+
+- action: Axios식 NewsUpdate 배치 12건 발행 + Bloomberg 오류 보고서 1건 기록 + live-head state 재정렬
+- selected_sources: Bloomberg 5건, WSJ 5건, Barron's 2건
+- published_files:
+  - 26-04-24 07-30 ⚡ 지멘스에너지는 AI 전력 수요를 등에 업고 연간 가이던스를 또 올렸습니다.md
+  - 26-04-24 07-30 🧪 다우는 이란 전쟁발 석유화학 병목이 2026년 내내 이어질 수 있다고 봅니다.md
+  - 26-04-24 07-30 📉 미 국채는 전쟁 뉴스 속에서도 2020년 이후 가장 좁은 박스권에 갇혔습니다.md
+  - 26-04-24 07-30 ✈️ 미국 항공사들은 전쟁발 제트연료 급등을 운임과 감편으로 넘기기 시작했습니다.md
+  - 26-04-24 07-30 🤖 마이크로소프트는 AI 재편 속에서 미국 인력 7퍼센트에 자발적 퇴직을 제안합니다.md
+  - 26-04-24 07-30 🧾 PwC는 에버그란데 감사 실패의 대가로 1억6600만달러를 물게 됐습니다.md
+  - 26-04-24 07-30 🌲 미국 최대 산림 보유 기업은 AI로 숲 전체를 디지털 트윈으로 바꾸려 합니다.md
+  - 26-04-24 07-30 🏗 유나이티드렌털스 급등은 데이터센터와 인프라 공사가 아직 식지 않았다는 신호입니다.md
+  - 26-04-24 07-30 🌐 캐나다는 미국과의 무역 의존을 약점으로 부르며 파이프라인 재무장을 꺼냅니다.md
+  - 26-04-24 08-51 🇰🇷 한국 반도체 보너스 90만달러 시대는 AI 붐의 그늘을 함께 키웁니다.md
+  - 26-04-24 08-51 🔋 소프트뱅크는 AI 데이터센터 전력을 위해 배터리 공장까지 직접 짓습니다.md
+  - 26-04-24 08-51 💻 인텔은 AI 에이전트 덕분에 다시 CPU의 시대를 불러오고 있습니다.md
+- error_reports:
+  - ERROR-26-04-24 07-30.md (Bloomberg AI model exploitation 기사: DevTools robot block + visible fallback 실패)
+- reviewed_but_skipped:
+  - Bloomberg prediction markets/Putin G20/Spirit Airlines 등 상단 정치성 헤드라인은 이번 런 우선순위에서 제외
+  - Barron's 나머지 상단 12건은 headline review 후 다음 배치로 넘기거나 비핵심으로 판단
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/trump-says-he-ll-look-into-federal-worker-prediction-market-bets
+  - wsj: https://www.wsj.com/business/ackmans-pershing-square-inc-to-sell-up-to-33-12-million-shares-in-ipo-fe2b8a72
+  - barrons: https://www.barrons.com/articles/atlanta-braves-stock-offers-upside-padres-near-sale-d52c1a7c
+  - last_run_kst: 2026-04-24T08:51:01+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - fetch-batch ok x4, fetch-article ok x2
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir ok x2
+  - queue boundary repaired: Bloomberg/WSJ/Barron's state head now found in RSS window
+- remaining_queue:
+  - Bloomberg 7건, WSJ 4건, Barron's 0건
+  - 남은 항목은 08:51 KST 이후 새로 열린 기사들로 재등장 중복이 아님
+- runtime: 약 7시간 03분
+
+## 2026-04-24T11:15:24+09:00
+
+- action: Axios식 NewsUpdate follow-up 배치 4건 발행 + 현재 큐 재확인
+- selected_sources: Bloomberg 2건, WSJ 1건, Barron's 1건
+- published_files:
+  - 26-04-24 10-54 ☁️ SAP는 AI를 얹은 클라우드가 아직 돈이 된다는 점을 숫자로 증명했습니다.md
+  - 26-04-24 10-54 🇰🇷 한국 반도체 보너스 90만달러 시대는 AI 붐의 그늘을 함께 키웁니다.md
+  - 26-04-24 10-54 🛡 이란전에 쏟아부은 미사일은 대만 방어 시간표까지 흔들고 있습니다.md
+  - 26-04-24 10-54 ⛽ 킨더모건의 배당 인상은 AI 전력 수요가 가스 파이프라인까지 밀고 온다는 뜻입니다.md
+- decisions:
+  - 이미 본문 확보가 끝난 고밀도 fetch 결과만 사용해 manifest를 구성했고, 현재 더 앞선 live-head state는 유지
+  - 2차 Bloomberg 신규 큐(ANZ AI officer / Indonesia Malacca / India FX)는 fetch-batch 재시도에서 빈 출력과 SIGTERM으로 끝나 이번 런에서는 기사화 보류
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/japan-s-inflation-picks-up-as-oil-clouds-outlook-ahead-of-boj
+  - wsj: https://www.wsj.com/business/ackmans-pershing-square-inc-to-sell-up-to-33-12-million-shares-in-ipo-fe2b8a72
+  - barrons: https://www.barrons.com/articles/atlanta-braves-stock-offers-upside-padres-near-sale-d52c1a7c
+  - last_run_kst: 2026-04-24T10:53:51+09:00
+- verification:
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-dir ok (26-04-24 10-54 묶음 4건)
+  - news_update_queue rerun ok
+- remaining_queue:
+  - Bloomberg 5건, WSJ 5건, Barron's 1건
+  - 다음 우선 후보는 WSJ Oracle AI debt, Bloomberg ANZ AI officer, Indonesia Malacca, India FX
+- runtime: 약 22분
+
+## 2026-04-24T11:59:34+09:00
+
+- action: Axios식 NewsUpdate 배치 5건 발행 + state 경계 보정
+- selected_sources: Bloomberg 1건, WSJ 4건, Barron's 0건
+- published_files:
+  - 26-04-24 11-11 🇯🇵 일본의 1.8퍼센트 물가는 유가 충격이 BOJ 동결 직전까지 따라붙었음을 보여줍니다.md
+  - 26-04-24 11-11 🏗 오라클의 3000억달러 AI 질주는 이제 전력보다 먼저 월가 대차대조표와 부딪힙니다.md
+  - 26-04-24 11-11 🚢 미국 구축함의 추격전은 이란 원유 봉쇄가 선언이 아니라 실제 해상 작전임을 보여줍니다.md
+  - 26-04-24 11-11 🎲 기밀 작전에 베팅한 미군 사건은 예측시장이 이제 진짜 내부자거래 전장으로 들어왔음을 보여줍니다.md
+  - 26-04-24 11-46 🤖 메타의 10퍼센트 감원은 AI가 보조도구가 아니라 조직도 자체가 되는 순간을 보여줍니다.md
+- reviewed_but_skipped:
+  - Bloomberg 중국 수출물가 기사와 China Tech Split 기사는 Chrome DevTools 본문 수집 중 robot-detection 페이지가 반환돼 ERROR-26-04-24 11-11.md로 기록하고 기사화하지 않음
+  - Barron's Earnings Storm은 본문은 확보됐지만 장 마감 브리프 성격이 강해 이번 런에서는 기사화하지 않음
+- manifests:
+  - /tmp/automation_news_manifest_20260424_0935.json
+  - /tmp/automation_news_stateonly_20260424_1111.json
+  - /tmp/automation_news_manifest_20260424_1120_second.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/japan-s-inflation-picks-up-as-oil-clouds-outlook-ahead-of-boj
+  - wsj: https://www.wsj.com/tech/ai/behind-metas-huge-layoffs-is-a-relentless-shift-toward-ai-97d99b54
+  - barrons: https://www.barrons.com/articles/atlanta-braves-stock-offers-upside-padres-near-sale-d52c1a7c
+  - last_run_kst: 2026-04-24T11:46:12+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok x3
+  - fetch-article ok: Bloomberg Japan CPI, WSJ Oracle AI debt, WSJ Iran blockade, WSJ Maduro bets, WSJ Meta layoffs
+  - fetch-article robot-detected: Bloomberg China exporters, Bloomberg China Tech Split
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - state-only validate/apply ok x1
+  - validate-dir ok
+- queue_after_final_check:
+  - bloomberg: 15건 남음 (robot-detected 이후 newer queue 유지)
+  - wsj: 2건 남음 (Chinese satellites, private-credit withdrawals)
+  - barrons: 1건 남음 (Earnings Storm)
+- runtime: 약 2시간 40분
+
+
+## 2026-04-24T14:52:49+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행
+- result: 총 7건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- published_articles:
+  - 26-04-24 14-48 🚢 제재 유조선 유리는 호르무즈 봉쇄가 실제 통과 시험으로 번졌음을 보여줍니다.md
+  - 26-04-24 14-48 🏦 ECB는 이란 전쟁 물가 충격에 6월 보험성 인상을 저울질합니다.md
+  - 26-04-24 14-48 🛤 중앙아시아는 전쟁이 흔든 에너지와 무역로를 새 성장축으로 바꾸고 있습니다.md
+  - 26-04-24 14-48 🧠 딥시크 V4는 중국 AI가 다시 비용과 개방형 모델로 압박한다는 신호입니다.md
+  - 26-04-24 14-48 🏦 사모신용 환매는 공포뿐 아니라 가격 차익거래 때문에 더 거세지고 있습니다.md
+  - 26-04-24 15-02 🏦 KKR과 캐피털그룹은 사모신용을 아시아 개인투자자용 펀드로 다시 포장합니다.md
+  - 26-04-24 15-02 🚀 SpaceX IPO는 우주기업보다 AI 데이터센터 기업이라는 가격표를 시험합니다.md
+- reviewed_but_skipped: TSMC 펀드 규제 완화, BYD/Geely EV 수요, 일본 전기요금, Volvo 주문, WSJ 국채 market talk, Barron's 식품 배당 등은 중복·저밀도·상대 우선순위 이유로 state head만 반영.
+- final_state: bloomberg=volvo-truck-orders-jump-14-on-stronger-europe-americas-demand, wsj=jgbs-fall-tracking-declines-in-u-s-treasurys-9c6b35b0, barrons=big-food-dividends-look-stretched-cannabis-companies-d74adc60, last_run_kst=2026-04-24T15:02:00+09:00.
+- verification: world_memory_cli list ok, fetch-batch ok x2, validate-manifest ok x2, apply-manifest ok x2, validate-dir ok, news_update_queue rerun ok with all sources 0.
+- runtime: 약 1시간 45분
+
+## 2026-04-24T16:12:57+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행
+- result: 총 12건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 7건, WSJ 2건, Barron's 3건
+- published_articles:
+  - 26-04-24 16-10 🇨🇳 중국 지방관료의 승진표에 탄소 목표가 들어갑니다.md
+  - 26-04-24 16-10 🏦 영국 중앙은행은 주가가 위험을 너무 싸게 보고 있다고 경고합니다.md
+  - 26-04-24 16-10 🛢 골드만은 걸프 원유 공급이 전쟁 전보다 57% 줄었다고 봅니다.md
+  - 26-04-24 16-10 🔦 라이트인텔리전스 IPO는 AI 광컴퓨팅 열기를 홍콩으로 끌어옵니다.md
+  - 26-04-24 16-10 ⛽ 영국 소비자는 전쟁 유가 충격을 주유소에서 먼저 반영했습니다.md
+  - 26-04-24 16-10 🚆 로비토 철도는 구리와 코발트 공급망을 대서양으로 돌립니다.md
+  - 26-04-24 16-10 🧾 미국은 동남아 온라인 사기 산업을 제재와 현상금으로 압박합니다.md
+  - 26-04-24 16-10 🇬🇧 영국 소비심리는 이란 전쟁 유가에 다시 꺾였습니다.md
+  - 26-04-24 16-10 💳 사모신용 펀드는 환매와 배당 커버리지 시험대에 올랐습니다.md
+  - 26-04-24 16-10 🏛 보험사는 투자자들이 빠져나가는 사모신용 펀드에 돈을 빌려줬습니다.md
+  - 26-04-24 16-22 🇯🇵 노무라는 일본 시장 회복을 타고 2년 연속 기록적 이익을 냈습니다.md
+  - 26-04-24 16-22 🧺 버크셔는 버핏 프리미엄이 빠진 뒤 스스로 매수 후보가 됐습니다.md
+- reviewed_but_skipped:
+  - Bloomberg India/Trump social post, Waterland PE, Thailand royal-insult case, Norway under-16 social-media ban 등은 상대 우선순위와 시장 직접성 이유로 state head 아래에서 정리.
+  - WSJ UK consumer sentiment는 1차에서 이미 발행했지만 RSS Date 재정렬로 재큐에 다시 보여 2차 manifest에서 WSJ state를 해당 URL로 보정.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-24/nomura-posts-record-full-year-profit-on-japan-market-recovery
+  - wsj: https://www.wsj.com/economy/u-k-consumer-sentiment-dragged-further-by-iran-war-c3aef7ac
+  - barrons: https://www.barrons.com/articles/buffett-abel-berkshire-hathaway-stock-43f2385f
+  - last_run_kst: 2026-04-24T16:22:00+09:00
+- verification: world_memory_cli list ok, news_update_queue preflight ok, fetch-batch ok x3, validate-manifest ok x2, apply-manifest ok x2, validate-dir ok x2, news_update_queue final rerun ok with all sources 0.
+- runtime: 약 1시간 10분
+
+## 2026-04-24T17:09:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행
+- result: 총 6건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건, WSJ 1건, Barron's 1건
+- published_articles:
+  - 26-04-24 17-09 🛢️ 이란 전쟁은 가스 과잉 시대를 2년 뒤로 밀었습니다.md
+  - 26-04-24 17-09 🇪🇺 유럽은 가스가 부족한 순간 러시아 LNG 금지를 시작합니다.md
+  - 26-04-24 17-09 ⚡ EU 지도자들은 에너지 대책이 부족하다고 봅니다.md
+  - 26-04-24 17-09 🔋 호주의 해저 전력 케이블이 환경 승인을 받았습니다.md
+  - 26-04-24 17-09 🇯🇵 일본은행은 전쟁발 스태그플레이션 위험 앞에서 멈춰 섰습니다.md
+  - 26-04-24 17-09 🧠 DeepSeek V4는 Nvidia의 중국 기회를 흔듭니다.md
+- reviewed_but_skipped:
+  - Bloomberg 콩 소비 트렌드, 유럽 주식 상대성과, 영국 retail newsletter, 스페인 NATO 기사 등은 시장 직접성·본문 우선순위 이유로 state head 아래에서 정리.
+  - WSJ FX/이탈리아 은행/금/유로존 채권 market talk는 짧거나 중복도가 높아 state head 아래에서 정리.
+  - Barron's gold funds는 금 헤지 일반론으로 중복도가 높아 state head만 전진.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-24/viral-tiktok-trend-turns-beans-into-must-buy-grocery-item
+  - wsj: https://www.wsj.com/finance/currencies/asian-currencies-consolidate-rising-mideast-tensions-could-weigh-886d043b
+  - barrons: https://www.barrons.com/articles/gold-funds-stock-market-748b4c58
+  - last_run_kst: 2026-04-24T17:09:00+09:00
+- verification: world_memory_cli list ok, news_update_queue preflight ok, Chrome DevTools fetch-batch ok x2 with batch_browser_reused=true, validate-manifest ok, apply-manifest ok, validate-files ok, news_update_queue final rerun ok with all sources 0.
+- runtime: 약 35분
+
+
+## 2026-04-24T19:13:10+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행 + Barron's state-only 정리 1회.
+- result: 총 9건 발행, Bloomberg 오류 보고서 1건 기록, 최종 queue-zero finish.
+- selected_sources: Bloomberg 8건, WSJ 1건, Barron's 0건 기사화.
+- published_articles:
+  - 26-04-24 19-06 🧑‍⚖️ 머스크와 올트먼의 OpenAI 전쟁은 이제 법정에서 AI 지배구조를 겨눕니다.md
+  - 26-04-24 19-06 🧱 중국은 Meta의 Manus 인수 뒤 AI 스타트업의 미국 자본을 막으려 합니다.md
+  - 26-04-24 19-06 📉 글로벌 채권은 이란 리스크에 다시 금리인하 기대를 내려놓고 있습니다.md
+  - 26-04-24 19-06 🧠 AI 일자리 충격은 사라진 것이 아니라 지연되고 있습니다.md
+  - 26-04-24 19-06 🇨🇳 왕이는 동남아 순방에서 협력과 스캠 단속을 동시에 밀고 있습니다.md
+  - 26-04-24 19-06 🪙 ECB는 디지털 유로를 민간 결제 표준에 붙이며 2029년 출시를 준비합니다.md
+  - 26-04-24 19-06 ⛽ Repsol과 BP는 스페인 연료 도매 시장의 과점 의혹에 걸렸습니다.md
+  - 26-04-24 19-06 🏭 머스크의 Intel 반도체 공장 구상은 시간표보다 훨씬 먼 이야기입니다.md
+  - 26-04-24 19-12 🏦 북유럽 은행들은 2300억달러 돈세탁 스캔들의 긴 그림자를 벗어나고 있습니다.md
+- error_reports:
+  - ERROR-26-04-24 19-12.md (Bloomberg Audi China article returned robot-detection page in Chrome DevTools path).
+- reviewed_but_skipped:
+  - Bloomberg war podcast skipped as podcast-summary format and overlapping with Middle East energy/bond coverage.
+  - Barron's stock movers aggregate fetched but skipped/state-only because Intel/SAP/chip moves were already covered and body depth was thin.
+  - WSJ mayor and Supreme Court lawyer hiring items skipped due low market relevance; WSJ state advanced to reviewed head.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-24/banks-turn-page-on-major-dirty-money-scandal-nordic-edition
+  - wsj: https://www.wsj.com/us-news/chris-carney-mayor-mooresville-5cbca5a4
+  - barrons: https://www.barrons.com/articles/stock-movers-ae902cd2
+  - last_run_kst: 2026-04-24T19:12:00+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - fetch-batch ok: Bloomberg 8/8, WSJ 1/1, Barron's stock movers 1/1, Bloomberg second batch 1/2
+  - fetch-batch robot-detected: Bloomberg Audi China strategy article
+  - validate-manifest ok x2, state-only validate/apply ok x1, apply-manifest ok x2
+  - validate-files/validate-dir ok for 9 articles and 1 error report
+  - news_update_queue final rerun ok with Bloomberg/WSJ/Barron's all 0
+- runtime: 약 12분
+
+## 2026-04-24T22:22:03+09:00
+
+- action: Axios식 NewsUpdate selective batch 3회 실행.
+- result: 총 14건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 10건, WSJ 1건, Barron's 3건
+- published_articles:
+  - 26-04-24 22-13 ⚡ 인도 전력 배전 IPO는 보조금 체제의 시장 시험대입니다.md
+  - 26-04-24 22-13 🛒 캐나다 소비는 관세와 전쟁에도 3개월째 버텼습니다.md
+  - 26-04-24 22-13 🚢 헤그세스는 호르무즈 비용을 유럽과 아시아에 떠넘기려 합니다.md
+  - 26-04-24 22-13 🛡 맥킨지 파트너의 드론 스타트업 지분은 방산 붐의 이해상충을 드러냅니다.md
+  - 26-04-24 22-13 🏦 Fed와 Treasury의 새 합의는 채권시장을 정치의 안쪽으로 밀어 넣습니다.md
+  - 26-04-24 22-13 💊 Lilly의 비만약 알약은 Novo 추격전에서 느리게 출발했습니다.md
+  - 26-04-24 22-13 💾 인텔 랠리는 미국 정부의 반도체 베팅을 300억달러 이익으로 바꿨습니다.md
+  - 26-04-24 22-13 🧠 AMD는 인텔 실적 덕분에 AI 에이전트 CPU 수요의 승자로 재평가받습니다.md
+  - 26-04-24 22-13 🧾 미국 의회 기능부전은 이제 채권시장 리스크 프리미엄입니다.md
+  - 26-04-24 22-22 💳 인텔은 실적 서프라이즈 직후 채권시장 문을 두드립니다.md
+  - 26-04-24 22-22 ⛽ Dangote 정유소는 이란 전쟁이 만든 아프리카 연료 공백을 파고듭니다.md
+  - 26-04-24 22-22 🇪🇺 EU 정상들은 이란 전쟁의 성장 물가 충격을 경고받았습니다.md
+  - 26-04-24 22-22 🥫 대형 식품회사는 가격 인상 이후 새 브랜드와 취향 변화에 밀리고 있습니다.md
+  - 26-04-24 22-22 🛢 캐나다는 Enbridge 가스관 확장으로 미국 의존을 줄이려 합니다.md
+- reviewed_but_skipped:
+  - WSJ Treasury yields market-talk roundup은 호르무즈/금리 맥락은 있었지만 Bloomberg Hegseth 및 Fed/Treasury 기사와 중복도가 높아 기사화하지 않음.
+  - Bloomberg Meloni, Meta-Amazon chips, EU neoliberalism, Nasdaq futures, Hungary, Cava 등은 중복·오피니언/저우선순위·시장 직접성 이유로 state head 아래에서 정리.
+  - Barron's Meta-Amazon, GE Vernova, Oracle, Trade Desk 등은 당일 AI/전력/반도체 중복 또는 본문 밀도 문제로 제외.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-24/intel-to-hold-fixed-income-calls-following-blowout-sales-outlook
+  - wsj: https://www.wsj.com/world/americas/canada-approves-enbridges-3-billion-westcoast-gas-pipeline-expansion-3aa1a78d
+  - barrons: https://www.barrons.com/articles/us-government-trump-investment-intel-stock-gain-162a03a1
+  - last_run_kst: 2026-04-24T22:22:03+09:00
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok x2 with batch_browser_reused=true, fetch-article ok x1, validate-manifest/apply-manifest ok x3, validate-files ok for all 14 new articles, final news_update_queue all-zero.
+- runtime: 약 25분
+
+## 2026-04-25T00:18:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 3회 실행.
+- result: 총 11건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 6건, WSJ 5건, Barron's 0건
+- published_articles:
+  - 26-04-25 00-09 🧠 스위스 금융감독당국은 Mythos AI를 은행 시스템 리스크로 봅니다.md
+  - 26-04-25 00-09 🌾 이란 전쟁은 비료와 포장재를 통해 식탁 물가를 흔듭니다.md
+  - 26-04-25 00-09 🛡️ EU는 미국 없이 국경을 지킬 계획을 현실화하고 있습니다.md
+  - 26-04-25 00-09 💾 메모리칩 ETF DRAM은 열흘 만에 15억달러를 끌어모았습니다.md
+  - 26-04-25 00-09 🧾 미국 소비심리는 전쟁발 인플레이션 불안에 사상 최저로 밀렸습니다.md
+  - 26-04-25 00-09 🧠 Meta는 아마존 CPU로 AI 에이전트 인프라를 넓힙니다.md
+  - 26-04-25 00-09 🇪🇺 Cohere와 Aleph Alpha는 실리콘밸리 밖 주권 AI를 키웁니다.md
+  - 26-04-25 00-09 ⚛️ X-Energy IPO는 AI 전력난이 원전 스타트업 밸류를 다시 쓴 사례입니다.md
+  - 26-04-25 00-09 🛰️ 방산주는 전쟁 수주가 늘어도 투자자를 설득하지 못했습니다.md
+  - 26-04-25 00-12 🛢️ 페르시아만 원유 충격은 전쟁이 끝나도 오래 남습니다.md
+  - 26-04-25 00-14 🏦 영국 중앙은행은 미국 주식 과열을 조용히 경고했습니다.md
+- reviewed_but_skipped:
+  - Bloomberg DOJ/Powell probe 기사와 WSJ/Barron's Powell 관련 기사는 정책 단신·중복도가 높아 상태 경계만 반영.
+  - Bloomberg SNB, FOIA, Tanzania rail, GAM, French power, Romania Hormuz 등은 이번 핵심 축보다 우선순위가 낮아 제외.
+  - Barron's advisor/transport/X-Energy/Powell 후보는 본문 밀도 또는 WSJ 중복 문제로 기사화하지 않음.
+  - WSJ Market Talk, politics/opinion/newsletter류와 4월 19일 과거 의견 기사들은 시장 직접성·신선도 기준으로 제외.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-24/us-stock-market-bank-of-england-sounds-alarm
+  - wsj: https://www.wsj.com/world/middle-east/persian-gulf-oil-damage-will-ripple-long-past-the-end-of-the-war-845acf09
+  - barrons: https://www.barrons.com/advisor/articles/how-merrill-advisor-michael-duckworth-serves-the-complex-finances-of-special-needs-families-aeb39b4e
+  - last_run_kst: 2026-04-25T00:14:00+09:00
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok x4 with preflight_degraded=false, validate-manifest/apply-manifest ok x3, validate-dir ok for 11 new articles, final news_update_queue all-zero.
+- runtime: 약 16분
+
+## 2026-04-25T00:46:43+09:00
+
+- action: NewsCollector 자동화 큐 지연 가드 구현.
+- decision: `fetch-batch`에 `--automation-scheduled-at`, `--automation-attempted-at`, `--max-automation-lag-minutes`를 추가하고 기본 30분 이상 지연 시 브라우저 preflight 전에 정상 skip하도록 설정.
+- changed_files: scripts/news_update_harness.py, tests/test_news_update_harness.py, SKILLs/NewsCollector/SKILL.md, scripts/README.md.
+- verification: `python3 -m py_compile scripts/news_update_harness.py`, `python3 -m unittest tests.test_news_update_harness`, stale-queue CLI smoke test 모두 통과.
+
+## 2026-04-25T03:14:45+09:00
+
+- action: Axios식 NewsUpdate selective batch 3회 실행.
+- result: 총 16건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 8건, WSJ 5건, Barron's 3건
+- published_articles:
+  - 26-04-25 03-14 🛩 F-35 증산 계획은 드론 시대에도 미국 방산 예산이 전투기에 남아 있음을 보여.md
+  - 26-04-25 03-14 ⛽ Six One은 미국 가스 변동성 장세에서 트래피규라를 앞질렀습니다.md
+  - 26-04-25 03-14 ⚖️ xAI의 콜로라도 소송은 AI 규제를 연방 경쟁력 문제로 끌어올렸습니다.md
+  - 26-04-25 03-14 🛰 Golden Dome 계약은 우주 요격체를 방산 예산의 다음 시험대로 만들었습니다.md
+  - 26-04-25 03-14 💵 베센트는 새 스왑라인을 달러 패권 강화 도구로 제시했습니다.md
+  - 26-04-25 03-14 🪫 유럽 에너지 부족은 호르무즈 전쟁 뒤에도 오래 머물 태세입니다.md
+  - 26-04-25 03-14 🍁 캐나다 소비는 버텼지만 연료비 충격이 다음 시험대입니다.md
+  - 26-04-25 03-14 💳 Medallia와 Affordable Care 부도는 사모신용의 손실이 현실화됐다는 신호입니다.md
+  - 26-04-25 03-14 🏦 중앙은행 슈퍼위크는 전쟁발 에너지 물가를 정책 언어로 바꿀 시험입니.md
+  - 26-04-25 03-14 ⛏ EU와 미국은 핵심광물 협력을 실행 단계로 끌어내려 합니다.md
+  - 26-04-25 03-14 💊 Organon은 Sun Pharma의 130억달러 제안에 다시 급등했습니다.md
+  - 26-04-25 03-14 🎲 브라질은 선거와 스포츠 예측시장을 금융상품 밖으로 밀어냅니다.md
+  - 26-04-25 03-14 🧠 인간과 AI의 격차는 정답보다 협업 방식에서 갈렸습니다.md
+  - 26-04-25 03-14 🏗 QXO 주가 하락은 건자재 롤업 전략의 통합 리스크를 드러냈습니다.md
+  - 26-04-25 03-14 🔌 MaxLinear는 광통신 매출 폭증으로 AI 인프라 프리미엄을 받기 시작했습니다.md
+  - 26-04-25 03-14 🧪 Intertek은 EQT의 112억달러 제안을 너무 낮다고 거절했습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Stellantis China 생산 재개와 Milei Vaca Muerta 단신은 본문 밀도가 낮아 기사화하지 않음.
+  - Bloomberg FIFA prediction-market sponsor, Powell opinion, 스포츠/엔터테인먼트/정치 단신은 시장 직접성 또는 중복도 기준으로 제외.
+  - WSJ Google-Anthropic, Polymarket, Barron's 반도체 단신 일부는 직전 발행 주제와 중복되어 제외.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-24/intertek-rejects-8-3-billion-unsolicited-takeover-bid-from-eqt
+  - wsj: https://www.wsj.com/tech/ai/is-ai-smarter-than-humans-cyborg-956e0f0e
+  - barrons: https://www.barrons.com/articles/qxo-topbuild-stock-acquisition-cd314ebb
+  - last_run_kst: 2026-04-25T03:14:45+09:00
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok x3 with automation lag guard within budget and batch_browser_reused=true, validate-manifest/apply-manifest ok x3, validate-dir --limit 35 ok, final news_update_queue all-zero.
+- runtime: 약 13분
+
