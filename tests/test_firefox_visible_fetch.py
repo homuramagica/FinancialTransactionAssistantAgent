@@ -108,6 +108,7 @@ class FirefoxVisibleFetchTests(unittest.TestCase):
     def test_command_key_code_line_uses_layout_independent_shortcuts(self) -> None:
         self.assertEqual(fetch._command_key_code_line("a"), "    key code 0 using command down")
         self.assertEqual(fetch._command_key_code_line("c"), "    key code 8 using command down")
+        self.assertEqual(fetch._command_key_code_line("r"), "    key code 15 using command down")
         self.assertEqual(fetch._command_key_code_line("w"), "    key code 13 using command down")
         self.assertEqual(fetch._command_key_code_line("u"), "    key code 32 using command down")
 
@@ -138,13 +139,13 @@ class FirefoxVisibleFetchTests(unittest.TestCase):
     def test_fetch_article_quits_firefox_after_success(self) -> None:
         with mock.patch.object(fetch, "_ensure_firefox_available", return_value=None), \
              mock.patch.object(fetch, "_browser_session_lock", return_value=nullcontext()), \
-             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "bloomberg"}), \
+             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "dow_jones"}), \
              mock.patch.object(fetch, "_open_url_in_firefox"), \
              mock.patch.object(fetch.time, "sleep"), \
              mock.patch.object(fetch, "_copy_visible_page_text", return_value="fallback text"), \
              mock.patch.object(fetch, "_copy_view_source_html_and_close_tabs", return_value=SAMPLE_HTML), \
              mock.patch.object(fetch, "_quit_firefox") as quit_firefox:
-            result = fetch.fetch_article("https://www.bloomberg.com/news/articles/example")
+            result = fetch.fetch_article("https://www.wsj.com/articles/example")
 
         self.assertTrue(result["success"])
         quit_firefox.assert_called_once_with()
@@ -152,11 +153,48 @@ class FirefoxVisibleFetchTests(unittest.TestCase):
     def test_fetch_article_can_keep_firefox_open_for_batch(self) -> None:
         with mock.patch.object(fetch, "_ensure_firefox_available", return_value=None), \
              mock.patch.object(fetch, "_browser_session_lock", return_value=nullcontext()), \
-             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "bloomberg"}), \
+             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "dow_jones"}), \
              mock.patch.object(fetch, "_open_url_in_firefox") as open_firefox, \
              mock.patch.object(fetch.time, "sleep"), \
              mock.patch.object(fetch, "_copy_visible_page_text", return_value="fallback text"), \
              mock.patch.object(fetch, "_copy_view_source_html_and_close_tabs", return_value=SAMPLE_HTML), \
+             mock.patch.object(fetch, "_quit_firefox") as quit_firefox:
+            result = fetch.fetch_article(
+                "https://www.wsj.com/articles/example",
+                close_after=False,
+            )
+
+        self.assertTrue(result["success"])
+        open_firefox.assert_called_once_with(
+            "https://www.wsj.com/articles/example",
+            prefer_reuse=True,
+        )
+        quit_firefox.assert_not_called()
+
+    def test_fetch_article_reloads_short_bloomberg_once_even_in_batch(self) -> None:
+        short_html = """
+        <html><head><title>Short Bloomberg</title></head>
+        <body><article><p>짧은 본문</p><p>Sign in to read</p></article></body></html>
+        """
+        long_html = """
+        <html><head><title>Full Bloomberg</title></head>
+        <body><article>
+        <p>긴 본문은 블룸버그 세션이 붙은 뒤 다시 확보된 실제 기사 본문입니다.</p>
+        <p>시장 맥락, 기업 반응, 정책 배경, 투자자 해석을 충분히 담습니다.</p>
+        <p>추가 문단이 이어지며 본문 길이가 건강성 기준을 넉넉히 넘깁니다.</p>
+        <p>숫자와 전망, 다음 체크포인트까지 포함해 요약 생성에 충분합니다.</p>
+        <p>마지막 문단은 새로고침 후 정상 본문이 잡혔음을 보여줍니다.</p>
+        </article></body></html>
+        """
+
+        with mock.patch.object(fetch, "_ensure_firefox_available", return_value=None), \
+             mock.patch.object(fetch, "_browser_session_lock", return_value=nullcontext()), \
+             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "bloomberg"}), \
+             mock.patch.object(fetch, "_open_url_in_firefox"), \
+             mock.patch.object(fetch.time, "sleep"), \
+             mock.patch.object(fetch, "_copy_visible_page_text", side_effect=["Sign in to read", "긴 본문 " * 240]), \
+             mock.patch.object(fetch, "_copy_view_source_html_and_close_tabs", side_effect=[short_html, long_html]) as copy_source, \
+             mock.patch.object(fetch, "_reload_current_firefox_tab") as reload_tab, \
              mock.patch.object(fetch, "_quit_firefox") as quit_firefox:
             result = fetch.fetch_article(
                 "https://www.bloomberg.com/news/articles/example",
@@ -164,10 +202,13 @@ class FirefoxVisibleFetchTests(unittest.TestCase):
             )
 
         self.assertTrue(result["success"])
-        open_firefox.assert_called_once_with(
-            "https://www.bloomberg.com/news/articles/example",
-            prefer_reuse=True,
+        self.assertTrue(result["reloaded_once"])
+        self.assertEqual(result["title"], "Full Bloomberg")
+        self.assertEqual(
+            copy_source.call_args_list,
+            [mock.call(close_article=False), mock.call(close_article=True)],
         )
+        reload_tab.assert_called_once_with()
         quit_firefox.assert_not_called()
 
     def test_fetch_article_quits_firefox_after_capture_failure(self) -> None:
@@ -187,13 +228,13 @@ class FirefoxVisibleFetchTests(unittest.TestCase):
     def test_fetch_article_fails_if_firefox_quit_fails(self) -> None:
         with mock.patch.object(fetch, "_ensure_firefox_available", return_value=None), \
              mock.patch.object(fetch, "_browser_session_lock", return_value=nullcontext()), \
-             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "bloomberg"}), \
+             mock.patch.object(fetch, "_wait_for_site_access_slot", return_value={"site": "dow_jones"}), \
              mock.patch.object(fetch, "_open_url_in_firefox"), \
              mock.patch.object(fetch.time, "sleep"), \
              mock.patch.object(fetch, "_copy_visible_page_text", return_value="fallback text"), \
              mock.patch.object(fetch, "_copy_view_source_html_and_close_tabs", return_value=SAMPLE_HTML), \
              mock.patch.object(fetch, "_quit_firefox", side_effect=RuntimeError("quit failed")):
-            result = fetch.fetch_article("https://www.bloomberg.com/news/articles/example")
+            result = fetch.fetch_article("https://www.wsj.com/articles/example")
 
         self.assertFalse(result["success"])
         self.assertIn("quit failed", result["error"])

@@ -30,17 +30,16 @@ python3 scripts/analyze_market.py --news-style bloomberg --news-paragraphs 12 --
 `scripts/safari_fetch.py`는
 - WSJ/Barron's 기사 목록: Dow Jones RSS CSV 1회 조회 후 동시 분기
 - Bloomberg 기사 목록: Bloomberg RSS CSV
-- 개별 기사 본문: Chrome DevTools remote debugging + 전용 Chrome 프로필
 를 사용한다.
 
-파일명은 호환성 때문에 유지하지만 브라우저 수집 경로는 DevTools 전용이다.
-본문 수집이나 진단이 끝나면 탭을 닫고 Chrome 앱도 기본적으로 종료한다.
-필요할 때만 `--no-close`로 Chrome 종료를 생략할 수 있다.
+`safari_fetch.py` 파일명은 호환성 때문에 유지하지만, NewsCollector 본문 수집에서는 DevTools 경로를 비활성화하고 RSS 링크 추출에만 사용한다.
+개별 기사 본문은 `scripts/news_update_harness.py`가 Chrome visible 기본 경로와 Firefox visible 폴백 경로로 수집한다.
+본문 수집이나 진단이 끝나면 visible 브라우저 앱도 기본적으로 종료한다. 필요할 때만 `--no-close`로 종료를 생략할 수 있다.
 
 `scripts/firefox_visible_fetch.py`는
 - Firefox 일반 모드를 보이는 창으로 직접 열고
 - 기사 본문을 확보하면 탭을 닫고 Firefox 앱도 종료하고
-- Bloomberg는 기본 20초, Dow Jones 계열은 기본 10초 간격을 두는
+- 사이트별 접속 간격은 기본 20-40초 사이 임의의 시간을 두는
 메인 수집 경로다.
 
 이 경로는 `open -a Firefox ...` + macOS UI scripting만 사용하며,
@@ -48,38 +47,32 @@ Playwright / Firefox remote debugging / WebDriver / BiDi를 쓰지 않는다.
 
 ## 기본 설정
 
-- 기본 브라우저는 `chrome`이다.
-- 이전 `safari` 설정이나 `NEWS_FETCH_BROWSER=safari` 값이 남아 있어도 내부적으로 `chrome`으로 정규화된다.
-- Python 패키지 `websockets`가 필요하다: `python3 -m pip install websockets`
-- 기본 DevTools 프로필 경로는 `tmp/chrome_devtools_profile`이며 `NEWS_FETCH_DEVTOOLS_PROFILE_PATH`로 바꿀 수 있다.
-- Chrome 136+ 보안 변경 때문에 기본 Chrome 사용자 데이터 폴더에는 원격 디버깅 포트를 붙일 수 없어, 비표준 사용자 데이터 폴더를 유지해야 한다.
-- 기본 원격 디버깅 포트는 `9222`이며 `NEWS_FETCH_DEVTOOLS_PORT`로 바꿀 수 있다.
-- `safari_fetch.py`는 필요한 경우 Chrome 번들 내부 실행 파일을 우선 직접 실행하고, 실패하면 `open -na Google Chrome.app`로 한 번 더 폴백한다.
+- 기본 브라우저는 `chrome-visible`이다.
+- `--browser chrome`은 호환용 별칭이며 내부적으로 `chrome-visible`로 정규화된다.
+- Chrome DevTools/원격 디버깅 본문 수집은 NewsCollector에서 비활성화되어 있다.
+- Chrome visible은 기존 인증 재사용을 위해 `tmp/chrome_devtools_profile` 프로필 디렉터리를 계속 쓸 수 있지만, 원격 디버깅 포트를 열지 않는다.
+- `chrome-visible`은 필요한 경우 Chrome 번들 내부 실행 파일을 우선 직접 실행하고, 실패하면 `open -na Google Chrome.app`로 한 번 더 폴백한다.
 - LaunchServices가 간헐적으로 깨지는 환경이면 `NEWS_FETCH_CHROME_LAUNCH_MODE=direct`로 강제할 수 있다. 기본값은 `auto`다.
-- 브라우저 자동화는 공용 파일 락(`/tmp/safari_fetch_browser.lock`)으로 직렬화된다.
-  동시에 여러 `safari_fetch.py` 프로세스를 띄워도 기사 본문 연결은 자동으로 한 건씩 순서대로 진행된다.
+- NewsCollector 실행 전체는 전역 세션 락(`/tmp/news_update_session.lock`)으로 보호된다.
+  기존 세션이 큐 조회·본문 수집·검증·반영 중이면 새 세션은 시작 단계에서 정상 스킵한다.
+  락 경로는 `NEWS_UPDATE_SESSION_LOCK_PATH`, 대기 시간은 `NEWS_UPDATE_SESSION_LOCK_TIMEOUT`으로 조정할 수 있다.
+- 브라우저 자동화 내부는 별도의 공용 파일 락(`/tmp/safari_fetch_browser.lock`)으로 한 번 더 직렬화된다.
+  동시에 여러 visible fetch 프로세스를 띄워도 기사 본문 연결은 자동으로 한 건씩 순서대로 진행된다.
   필요하면 `--lock-timeout 180`처럼 대기 시간을 늘릴 수 있다.
 
 ## 빠른 진단
 
 ```bash
-python3 scripts/safari_fetch.py --diagnose --browser chrome
+python3 scripts/news_update_harness.py fetch-article --url "https://www.wsj.com/articles/example"
+python3 scripts/news_update_harness.py fetch-batch --url "https://www.wsj.com/articles/example"
 ```
 
-- 이 진단은 `websockets` 패키지, Chrome 앱 번들/실행 파일 검증, DevTools 포트 연결, 전용 프로필 접근, 페이지 JavaScript 실행 여부를 한 번에 점검한다.
+- 하네스는 기본적으로 `chrome-visible`을 진단하고 수집한다. 필요하면 `--browser firefox-visible`을 붙여 Firefox visible을 직접 점검한다.
 
 ## 세션 준비
 
-유료 기사 본문을 읽으려면 DevTools용 Chrome 프로필에 한 번 로그인해 두는 편이 좋다.
-
-```bash
-python3 scripts/safari_fetch.py https://www.wsj.com --session-setup
-```
-
-- 브라우저 창이 열리면 로그인/구독 인증을 완료한 뒤 Enter를 누른다.
-- 완료되면 `tmp/chrome_devtools_profile` 아래의 Chrome 프로필에 세션이 유지된다.
-- 다른 위치를 쓰고 싶다면 `NEWS_FETCH_DEVTOOLS_PROFILE_PATH`로 명시한 경로 아래에 세션이 유지된다.
-- 이후 본문 수집은 이 로그인된 DevTools Chrome 세션의 새 탭에서 진행된다.
+유료 기사 본문을 읽으려면 평소 쓰는 Chrome/Firefox visible 프로필에서 로그인 상태를 먼저 확인한다.
+본문 수집은 해당 visible 브라우저를 눈에 보이는 상태로 열어 순차 진행한다.
 
 ## 링크 수집 예시
 
@@ -93,9 +86,8 @@ python3 scripts/safari_fetch.py ignored --load-more --source bloomberg
 
 ## 자동화에서만 실패할 때 체크할 것
 
-- `python3 -m pip install websockets`가 끝났는지 확인
-- `python3 scripts/safari_fetch.py --diagnose --browser chrome`가 통과하는지 확인
-- `--session-setup`으로 WSJ/Barron's/Bloomberg 로그인 상태를 DevTools Chrome 프로필에 한 번 준비해 두기
+- `python3 scripts/news_update_harness.py fetch-article --url <확인용 기사 URL>`이 visible 경로에서 JSON을 반환하는지 확인
+- WSJ/Barron's/Bloomberg 로그인 상태가 일반 Chrome/Firefox visible 브라우저에 유지되어 있는지 확인
 - 다른 프로세스가 같은 수집 작업을 동시에 실행하고 있지 않은지 확인
 
 ## NewsUpdate 하네스
@@ -103,14 +95,13 @@ python3 scripts/safari_fetch.py ignored --load-more --source bloomberg
 `scripts/news_update_harness.py`는 Axios식 기사 초안과 `.state.json` 갱신을 한 번에 검증하고,
 검증을 통과한 배치만 `/NewsUpdate/`에 원자적으로 반영한다.
 또한 기사 본문 수집을 브라우저별 subprocess로 감싸서,
-Chrome DevTools 기본 경로와 visible 계열 폴백 경로를 함께 관리한다.
+visible 계열 본문 수집 경로를 관리한다.
 
-기본 브라우저는 `chrome`이다.
-- 메인 경로: `chrome` (Chrome DevTools)
-- 1차 폴백: `chrome-visible`
-- 2차 폴백: `firefox-visible`
+- 기본 브라우저는 `chrome-visible`이다.
+- 메인 경로: `chrome-visible`
+- 폴백: `firefox-visible`
 - visible 경로들은 원격 디버깅/Playwright를 사용하지 않는다.
-- 매체별 접근 간격 기본값은 `bloomberg=20초`, `dow_jones=10초`다.
+- 접속 간격 기본값은 매 접근마다 20-40초 사이에서 임의로 정한다.
 
 ### 신규 기사 후보 큐 확인
 
@@ -160,18 +151,18 @@ python3 scripts/news_update_harness.py fetch-batch \
   --url "https://www.wsj.com/articles/example-1" \
   --url "https://www.barrons.com/articles/example-2"
 python3 scripts/news_update_harness.py fetch-article \
-  --browser chrome \
+  --browser chrome-visible \
   --url "https://www.wsj.com/articles/example"
 ```
 
-- 기본값인 `firefox-visible`은 Firefox 일반 모드를 눈에 보이는 창으로만 조작하고, 본문 확보 후 탭을 닫은 뒤 Firefox 앱도 종료한다.
-- 기본값인 `chrome`은 `safari_fetch.py`의 Chrome DevTools 경로를 사용한다.
+- 기본값은 `chrome-visible`이며, `--browser chrome`은 호환용 별칭으로만 남아 있다.
 - `chrome-visible`과 `firefox-visible`은 눈에 보이는 창으로만 조작하고, 본문 확보 후 탭을 닫은 뒤 앱도 종료한다.
-- `fetch-batch`는 URL별로 fetch subprocess를 새로 실행하지만, `chrome` 기본 경로와 `chrome-visible`/`firefox-visible` 명시 경로 모두 브라우저 세션 하나를 유지한 채 기사들을 순차 수집하고 배치 종료 직전에 한 번만 정리 종료한다.
+- `fetch-batch`는 URL별로 fetch subprocess를 새로 실행하지만, visible 브라우저 세션 하나를 유지한 채 기사들을 순차 수집하고 배치 종료 직전에 한 번만 정리 종료한다.
+- `fetch-batch`는 배치 전체가 끝날 때까지 NewsCollector 세션 락을 잡는다. 겹쳐 뜬 자동화는 다른 세션이 정상 작동 중인 것으로 보고 `skipped_due_to_session_lock=true`, exit code 0으로 브라우저 preflight 전에 멈춘다.
 - 자동화 실행에서는 `--automation-scheduled-at`을 넘긴다. 예약 시각과 실제 기사 수집 시도 시각이 30분 이상 벌어지면 `skipped_due_to_automation_lag=true`로 브라우저 접근 전 정상 중단한다.
 - `fetch-batch`는 기본적으로 자동 브라우저 폴백을 끄고 진행해, 한 기사 실패 때문에 배치 전체가 오래 늘어지는 일을 줄인다. 필요할 때만 `--allow-chrome-fallback`을 명시한다.
-- `chrome` 경로에서는 DevTools 불안정 신호가 나오면 `--diagnose`를 자동 실행하고, 하네스 차원에서 1회 더 재시도한다.
-- 자동화에서는 Python 루프 안에서 `safari_fetch.py`나 `firefox_visible_fetch.py`를 직접 반복 호출하기보다 이 하네스를 우선 사용한다.
+- Bloomberg에서 로그인된 상태의 페이월/짧은 본문이 잡히면 같은 visible 탭에서 새로고침 1회를 먼저 수행한다.
+- 자동화에서는 Python 루프 안에서 `chrome_visible_fetch.py`나 `firefox_visible_fetch.py`를 직접 반복 호출하기보다 이 하네스를 우선 사용한다.
 
 ### NewsUpdate 디렉터리 일괄 검사
 

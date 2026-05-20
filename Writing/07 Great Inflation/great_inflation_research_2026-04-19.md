@@ -288,3 +288,59 @@
 - Investopedia: 개념 설명 참조
 - Forbes 아카이브: 버핏 1974년 인터뷰
 - NBER: 공식 경기침체 시작·종료 날짜
+
+---
+
+## 14. 2026-04-26 리서치 증보 팩
+
+이번 증보의 방향은 "인플레이션은 차트에 보이지 않는다"는 테제를 반복하는 대신, 각 장마다 하나의 문서·날짜·생활 장면을 박아 넣는 것이다. 독자가 기억해야 할 것은 추상적 인플레이션이 아니라, 금 태환 창구를 닫는 일요일 밤, 주유소 앞 빨간 깃발, 18% 모기지, 그리고 의회와 거리의 압박 속에서도 금리를 내리지 않은 볼커의 표정이다.
+
+### 우선 보정할 고증 메모
+
+- CPI 수치 표기는 "연평균"과 "12월-12월"을 구분한다. 예컨대 1974년 물가 상승률은 BLS 방식에 따라 연평균 CPI 변화와 연말 기준 변화가 다르게 보일 수 있으므로, 본문에는 "1974년 물가 상승률은 두 자릿수로 치솟았다"처럼 쓰고 필요한 곳에서 기준을 병기한다.
+- 1973~1974년 석유 엠바고의 직접 주체는 OAPEC(아랍 석유 수출국 기구)이다. 대중적으로 OPEC 엠바고라 불리지만, 본문에서는 "OAPEC, 더 넓게는 OPEC 산유국 질서"처럼 정리한다.
+- 볼커의 신장은 본문 기준 6피트 7인치, 약 201cm로 통일한다. 기존 리서치 메모의 193cm 표기는 수정 대상이다.
+- 1975년 세금 환급/감세는 Tax Reduction Act of 1975의 1974년 세액 리베이트를 중심으로 쓰되, "미국 역사상 최초" 같은 강한 표현은 추가 확인 전 사용하지 않는다.
+
+### 장별 삽입 앵커
+
+| 장 | 보강할 장면 | 활용 출처 |
+|----|-------------|-----------|
+| 서문 | 1966~1982를 가격, 배당, CPI 세 개의 선으로 나누어 설명. 명목 주가가 버틴 듯 보여도 구매력은 사라졌다는 첫 장면. | Shiller data, BLS CPI, yfinance |
+| Ch1 브레튼우즈 | 1944년 7월 1~22일, 마운트 워싱턴 호텔, 44개국 대표단, 금 1온스 35달러. 케인스와 화이트를 "쇠퇴하는 제국의 잔고"와 "금을 쥔 신흥 패권"의 대립으로 구체화. | IMF Bretton Woods overview, Fed History `Gold Convertibility Ends` |
+| Ch2 총과 버터 | 1965년 7월 28일 베트남 병력 증파와 7월 30일 Medicare/Medicaid 서명. 이틀 사이에 "총"과 "버터"가 모두 예산에 들어간 장면. | LBJ Library, National Archives |
+| Ch4 닉슨 쇼크 | 1971년 8월 13~15일 캠프 데이비드 주말. 닉슨, 코널리, 번스, 슐츠, 스타인, 볼커. 금 태환 중단, 90일 임금·물가 동결, 10% 수입 surcharge를 하나의 정치적 패키지로 서술. | Nixon Library, Fed History `Gold Convertibility Ends` |
+| Interlude 금본위제를 싫어한 중앙은행가 | 벤 버냉키를 1권 세계 금융위기 편의 Fed 의장이자 대공황 연구자로 소개. 금본위제는 황금률이 아니라 대공황기에 디플레이션과 금융위기를 전염시킨 족쇄였다는 관점을 제시한 뒤, 1971년의 문제를 "금 이탈" 자체가 아니라 "새 규칙 없는 규율 해체"로 재정의. | Bernanke 2004 `Money, Gold, and the Great Depression`, Bernanke & James 1990 NBER, Bernanke 2013 `Monetary Policy and the Global Economy` |
+| Ch5 아서 번스 | 번스를 "무능한 사람"이 아니라 정치경제를 너무 잘 아는 사람이 정치에 포획된 사례로 쓴다. 1974년 긴축은 있었으나 지속되지 못했다는 점을 강조. 현대 접점으로 제롬 파월을 삽입한다: 2021년 인플레이션 판단 실기, 2022~2023년 고강도 인상, 2025~2026년 트럼프의 공개 금리인하 압박·미란 임명·청사 리모델링 관련 법적 압박에도 연준 독립성을 방어한 사례. | Richmond Fed `Burns Disinflation of 1974`, Fed History `Great Inflation`, FOMC 2022/2023 statements, Powell 2026 statement, Boasberg 2026 opinion, Fed Miran press release, Axios/AP |
+| Ch7 오일쇼크 | 1973년 10월 19일 OAPEC 대미 엠바고, 배럴당 3달러대에서 12달러대로의 급등, 55mph 제한, 홀짝제, 일요일 주유 금지, 스미소니언의 빨간 깃발. | Fed History `Oil Shock of 1973-74`, State Department Milestones, Smithsonian |
+| Ch10 1975 반등 | 1973년 11월 시작, 1975년 3월 종료라는 NBER 경기침체 날짜는 사후 판정임을 명시. 당시 투자자는 "침체 종료" 공문을 보고 산 것이 아니다. | NBER business cycle dates |
+| Ch11 인플레 고착 | COLA(cost-of-living adjustment)를 핵심 장치로 사용. 물가가 오를 것이라고 믿는 사회는 계약서에 미래의 물가를 미리 써 넣는다. | BLS CPI, Fed History `Great Inflation` |
+| Ch13 배당 | 배당금은 입금되지만 마트 영수증과 난방비가 더 빨리 오른다는 가계부 장면. 배당수익률과 CPI를 나란히 놓는다. | Shiller data, BLS CPI |
+| Ch14 볼커 | 1979년 10월 6일 토요일 기자회견. 금리를 직접 조준하지 않고 은행 준비금/통화량 경로를 조이겠다는 발표를 "금리가 어디까지 오를지 시장에 맡겼다"로 풀기. | Fed History `Volcker's Anti-Inflation Measures`, San Francisco Fed |
+| Ch15 이중침체 | 1981년 10월 30년 고정 모기지 18%대, 1982년 11~12월 실업률 10.8%. "집값이 싸도 월납입액이 살인을 한다"는 생활 장면. | FRED `MORTGAGE30US`, FRED `UNRATE`, NBER |
+| Ch16 1982년 | 헨리 카우프만과 멕시코 외채 위기를 연결. 좋은 뉴스가 있어서 오른 것이 아니라, 더 나빠지는 속도가 꺾였다고 믿었기 때문에 오른 시장. | 당시 시장 기사 추가 확인 필요 |
+
+### 핵심 출처 링크
+
+- Federal Reserve History, `The Great Inflation`: https://www.federalreservehistory.org/essays/great-inflation
+- Federal Reserve History, `Gold Convertibility Ends`: https://www.federalreservehistory.org/essays/gold_convertibility_ends
+- Federal Reserve History, `Volcker's Announcement of Anti-Inflation Measures`: https://www.federalreservehistory.org/essays/anti-inflation-measures
+- Federal Reserve History, `Oil Shock of 1973-74`: https://www.federalreservehistory.org/essays/oil-shock-of-1973-74
+- Nixon Library, 1971년 8월 15일 새 경제정책 연설 자료: https://www.nixonlibrary.gov/research/almanac/august-15-1971
+- Ben Bernanke, `Money, Gold, and the Great Depression` (Federal Reserve, 2004): https://www.federalreserve.gov/boarddocs/speeches/2004/200403022/default.htm
+- Ben Bernanke & Harold James, `The Gold Standard, Deflation, and Financial Crisis in the Great Depression` (NBER Working Paper 3488, 1990): https://www.nber.org/papers/w3488
+- Ben Bernanke, `Monetary Policy and the Global Economy` (Federal Reserve, 2013): https://www.federalreserve.gov/newsevents/speech/bernanke20130325a.htm
+- Federal Reserve FOMC statement, March 16, 2022: https://www.federalreserve.gov/newsevents/pressreleases/monetary20220316a.htm
+- Federal Reserve FOMC statement, July 26, 2023: https://www.federalreserve.gov/newsevents/pressreleases/monetary20230726a.htm
+- Federal Reserve, Stephen I. Miran sworn in as Board governor, September 16, 2025: https://www.federalreserve.gov/newsevents/pressreleases/other20250916a.htm
+- Federal Reserve, Powell statement on DOJ subpoenas and Fed independence, January 11, 2026: https://www.federalreserve.gov/newsevents/speech/files/powell20260111a.pdf
+- U.S. District Court D.D.C., `In re Grand Jury Subpoenas`, March 11, 2026: https://cases.justia.com/federal/district-courts/district-of-columbia/dcdce/1%3A2026mc00012/288962/23/0.pdf
+- PolitiFact, Trump-Powell pressure and renovation investigation timeline, January 12, 2026: https://www.politifact.com/article/2026/jan/12/powell-trump-investigation-fed-renovation/
+- AP, Powell plans to remain on Fed board after chair term, April 29, 2026: https://apnews.com/article/powell-warsh-trump-federal-reserve-inflation-4e09e4cdb25856635c94abe0021fc1d3
+- Axios, Fed holds rates steady amid dissents, April 29, 2026: https://www.axios.com/2026/04/29/fed-powell-interest-rates
+- State Department, 1973 Oil Embargo: https://history.state.gov/milestones/1969-1976/oil-embargo
+- Smithsonian, 1970년대 주유소 빨간 깃발: https://americanhistory.si.edu/collections/search/object/nmah_1452723
+- NBER 경기순환 날짜: https://www.nber.org/research/data/us-business-cycle-expansions-and-contractions
+- FRED 30년 모기지 금리: https://fred.stlouisfed.org/series/MORTGAGE30US
+- FRED 실업률: https://fred.stlouisfed.org/series/UNRATE
+- Robert Shiller 장기 데이터: https://www.econ.yale.edu/~shiller/data.htm

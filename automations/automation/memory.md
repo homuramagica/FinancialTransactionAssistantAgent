@@ -1,4 +1,1325 @@
 # Automation Memory
+## 2026-04-28T16:04:44+09:00
+
+- action: BrowserMCP 설치/테스트 진행 중 사용자가 별도 기사 수집 프로세스 실행을 알려 일시 중단.
+- status:
+  - Codex global MCP에는 `browsermcp`가 등록됨: `npx -y @browsermcp/mcp@latest`.
+  - 프로젝트 내부 `tools/browsermcp`에 `@browsermcp/mcp` 0.1.3 설치와 `scripts/browsermcp_smoke_test.py` 스모크 테스트 추가.
+  - 스모크 테스트는 MCP initialize/tools/list 성공, 연결된 Bloomberg 탭 snapshot 성공까지 확인.
+  - 현재 추가 브라우저 조작은 중단. 사용자 재개 지시 전까지 NewsCollector/BrowserMCP 연동 추가 작업 금지.
+- runtime: 약 10분
+
+## 2026-04-28T15:46:35+09:00
+
+- action: NewsCollector 본문 수집 경로를 DevTools에서 visible 브라우저 전용으로 전환하고 Bloomberg 짧은 본문 처리 규칙을 복구.
+- code_changes:
+  - scripts/news_update_harness.py: 기본 브라우저를 chrome-visible로 변경, chrome은 호환 별칭으로 chrome-visible에 매핑, chrome-devtools/devtools 별칭은 ValueError로 차단, fetch-batch 폴백은 chrome-visible ↔ firefox-visible만 사용.
+  - scripts/safari_fetch.py 및 scripts/firefox_visible_fetch.py: 매체 접속 간격 기본값을 고정 초가 아니라 20-40초 랜덤으로 변경.
+  - scripts/chrome_visible_fetch.py 및 scripts/firefox_visible_fetch.py: Bloomberg에서 성공처럼 보이지만 짧은 본문/페이월/로그인 프롬프트가 잡히면 같은 visible 탭에서 새로고침 1회를 먼저 수행하도록 정리.
+  - SKILLs/NewsCollector/SKILL.md 및 scripts/README.md: DevTools 본문 수집 금지, visible 전용 경로, 20-40초 랜덤 간격, Bloomberg 짧은 본문 새로고침 규칙으로 문서 갱신.
+- BrowserMCP_note: ~/.codex/config.toml과 도구 노출 목록 기준 BrowserMCP MCP 서버는 아직 Codex 세션에 등록되어 있지 않음. Chrome 확장만으로는 현재 세션에서 바로 호출 불가.
+- verification:
+  - python3 -m py_compile scripts/news_update_harness.py scripts/chrome_visible_fetch.py scripts/firefox_visible_fetch.py scripts/safari_fetch.py ok
+  - python3 -m unittest tests.test_news_update_harness tests.test_safari_fetch tests.test_chrome_visible_fetch tests.test_firefox_visible_fetch ok, 89 tests.
+- runtime: 약 30분
+
+## 2026-04-28T15:16:26+09:00
+
+- action: Bloomberg 봇 차단 원인 복기 및 하네스 안전장치 보강.
+- finding: 15:02 fetch-batch에서 첫 Bloomberg 접근과 차단 발생 두 번째 Bloomberg 접근 사이 accessed_at 간격은 약 45초로, 40초 제한 미준수보다는 짧은 Bloomberg 본문을 성공으로 간주하고 다음 Bloomberg URL로 진행한 것이 더 직접적인 취약점이었다.
+- root_cause_detail:
+  - scripts/safari_fetch.py의 Bloomberg 기본 site throttle은 NEWS_FETCH_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS 기본값 45초였다.
+  - SKILLs/NewsCollector/SKILL.md에는 아직 20초로 적혀 있어 문서가 코드보다 낡아 있었다.
+  - 첫 Bloomberg 결과는 본문 731자, session_settle_rechecked=true였지만 success=true로 반환되어 후속 live blog 접근이 진행됐고, 그 접근에서 Bloomberg robot block이 반환됐다.
+- code_changes:
+  - scripts/news_update_harness.py: Bloomberg success 결과라도 본문이 NEWS_FETCH_BLOOMBERG_SHORT_TEXT_THRESHOLD 기본 1200자 미만이면 suspicious_bloomberg_short_text로 실패 처리하고 같은 Bloomberg 배치 후속 접근을 site_manual_check로 스킵하도록 추가.
+  - SKILLs/NewsCollector/SKILL.md: Bloomberg 기본 접근 간격을 45초로 수정하고 짧은 본문 시 후속 Bloomberg 중단 원칙 추가.
+  - tests/test_news_update_harness.py: 짧은 Bloomberg 본문 후속 중단 테스트 추가.
+  - tests/test_safari_fetch.py: 현재 코드에 맞춰 Bloomberg 45초 throttle 기대값과 open command 기대값 수정.
+- verification:
+  - python3 -m unittest tests.test_news_update_harness tests.test_safari_fetch ok, 59 tests.
+- runtime: 약 8분
+
+## 2026-04-28T15:10:00+09:00
+
+- action: Axios식 NewsUpdate selective Barron's 발행 + Bloomberg 봇 차단 오류 보고.
+- result: Barron's 3건 발행, Bloomberg는 DevTools Chrome에서 로봇 차단 페이지가 반환되어 재시도 없이 중단, WSJ 신규 없음.
+- selected_sources: Barron's 3건.
+- published_files:
+  - 26-04-28 15-10 Fed와 빅테크 실적이 같은 날 시장을 흔듭니다.md
+  - 26-04-28 15-10 옵션 시장은 거친 수요일에 대비하고 있습니다.md
+  - 26-04-28 15-10 Starbucks는 2023년 이후 첫 이익 성장을 시험합니다.md
+- error_reports:
+  - ERROR-26-04-28 15-10.md
+- reviewed_but_skipped:
+  - Bloomberg Iranian oil tankers: 본문이 731자로 짧아 풍부한 Axios식 기사로 발행하지 않음.
+  - Bloomberg FTSE/BP/Barclays live blog 및 후속 Bloomberg 후보: 로봇 차단 감지 후 같은 Bloomberg 배치 후속 접근 중단.
+  - Bloomberg Jimmy Kimmel follow-up: 시장 직접성이 낮고 이전 WSJ/Kimmel 경계와 중복성이 있어 fetch 전 저우선 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-28/new-zealand-secures-extra-nine-days-of-diesel-boosts-supply-50
+  - wsj: https://www.wsj.com/economy/central-banking/japans-central-bank-holds-rates-but-raises-inflation-views-f917b799
+  - barrons: https://www.barrons.com/articles/fed-amazon-microsoft-meta-alphabet-stock-01a6e074
+  - last_run_kst: 2026-04-28T15:10:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_1502.json
+  - tmp/automation_news_manifest_20260428_1510.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 6, WSJ 0, Barron's 3
+  - Chrome DevTools fetch-batch: requested 8, succeeded 4, failed 1, skipped 3; preflight_degraded=false, batch_browser_reused=true
+  - Bloomberg robot block detected on FTSE/BP/Barclays live blog; no blind retry, Bloomberg state left unchanged
+  - validate-manifest/apply-manifest ok for 3 Barron's articles + 1 error report
+  - validate-dir ok for '26-04-28 15-10*.md' and 'ERROR-26-04-28 15-10.md'
+  - final news_update_queue: Barron's 0, WSJ 0, Bloomberg 7 remaining due unchanged Bloomberg boundary
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 6분
+
+## 2026-04-28T14:05:42+09:00
+
+- action: Axios식 NewsUpdate selective Bloomberg batch 발행.
+- result: Bloomberg 2건 발행, WSJ/Barron's 신규 없음, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건.
+- published_files:
+  - 26-04-28 14-04 뉴질랜드는 중동 전쟁에 대비해 디젤 비축을 50퍼센트 늘렸습니다.md
+  - 26-04-28 14-04 Trump 인맥은 보스니아 세르비아계 지도자의 복귀를 돕고 있습니다.md
+- reviewed_but_skipped: 없음.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-28/new-zealand-secures-extra-nine-days-of-diesel-boosts-supply-50
+  - wsj: https://www.wsj.com/economy/central-banking/japans-central-bank-holds-rates-but-raises-inflation-views-f917b799
+  - barrons: https://www.barrons.com/articles/stocks-today-earnings-sp500-75eb9510
+  - last_run_kst: 2026-04-28T14:04:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_1402.json
+  - tmp/automation_news_manifest_20260428_1404.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 2, WSJ 0, Barron's 0
+  - Chrome DevTools fetch-batch ok for 2/2; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 2 Bloomberg articles
+  - validate-dir ok for '26-04-28 14-04*.md' with 2 matched files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 4분
+
+## 2026-04-28T13:14:49+09:00
+
+- action: Axios식 NewsUpdate selective batch 3회 발행 + 후속 신규 Bloomberg 뉴스레터 후보까지 처리.
+- result: Bloomberg 7건, WSJ 1건 발행, Barron's 신규 없음, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 7건, WSJ 1건.
+- published_files:
+  - 26-04-28 13-08 일본 헬륨 수입 급감은 AI 칩 공급망의 숨은 전쟁 비용입니다.md
+  - 26-04-28 13-08 중국 정유사들은 넘치는 재고를 들고 연료 수출 재개를 준비합니다.md
+  - 26-04-28 13-08 TPG는 일본 물류 부동산 베팅을 ESR 자산 인수로 키웠습니다.md
+  - 26-04-28 13-08 이란은 호르무즈 공격 중단과 항만 봉쇄 해제를 맞바꾸려 합니다.md
+  - 26-04-28 13-12 유럽 증시는 에너지 충격과 AI 격차 속 상승 동력을 잃었습니다.md
+  - 26-04-28 13-12 영국 청년들은 취업난을 피해 응급 석사로 몰리고 있습니다.md
+  - 26-04-28 13-12 사우디는 이란 전쟁의 출구를 찾고 있습니다.md
+  - 26-04-28 13-13 시장은 이란 전쟁보다 AI 실적 랠리를 더 크게 보고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg/WSJ BOJ·yen 후보 3건: 직전 12시대 BOJ 기사와 중복도가 높아 state-only 처리.
+  - Bloomberg King Charles/Trump 칼럼: 금융·시장 직접성이 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/opinion/newsletters/2026-04-28/earnings-bulls-hate-to-suggest-partying-like-it-s-1999-but
+  - wsj: https://www.wsj.com/economy/central-banking/japans-central-bank-holds-rates-but-raises-inflation-views-f917b799
+  - barrons: https://www.barrons.com/articles/stocks-today-earnings-sp500-75eb9510
+  - last_run_kst: 2026-04-28T13:13:28+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_1303.json
+  - tmp/automation_fetch_20260428_1309_second.json
+  - tmp/automation_fetch_20260428_1313_third.json
+  - tmp/automation_news_manifest_20260428_1303.json
+  - tmp/automation_news_manifest_20260428_1310_second.json
+  - tmp/automation_news_manifest_20260428_1314_third.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 4, WSJ 3, Barron's 0
+  - Chrome DevTools fetch-batch ok for 7/7, 4/4, 1/1; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 4 + 3 + 1 article batches
+  - validate-dir ok for '26-04-28 13-*.md' with 8 matched files
+  - long macOS NFD filename for Saudi article shortened and revalidated
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 12분
+
+## 2026-04-28T12:22:54+09:00
+
+- action: Axios식 NewsUpdate selective batch 3회 발행 + 신규 BOJ 후보까지 후속 처리.
+- result: Bloomberg 10건, WSJ 3건 발행, Barron's 신규 없음, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 10건, WSJ 3건.
+- published_files:
+  - 26-04-28 12-20 인도 개인투자자들은 중소형주 반등에 다시 올라타고 있습니다.md
+  - 26-04-28 12-20 Elliott은 Nippon Express 지분으로 일본 행동주의 베팅을 키웠습니다.md
+  - 26-04-28 12-20 Coupang 조사는 한미 디지털 통상 갈등으로 번지고 있습니다.md
+  - 26-04-28 12-20 Digital Edge 매각 검토는 아시아 데이터센터 가격을 다시 시험합니다.md
+  - 26-04-28 12-20 BlackRock은 이란 전쟁 이후 높은 국채금리를 새 기본값으로 봅니다.md
+  - 26-04-28 12-20 중국 VC는 미국 투자자를 붙잡기 위해 평행 펀드를 늘리고 있습니다.md
+  - 26-04-28 12-20 Meta의 Manus 인수는 중국 금지 명령으로 되감기 국면에 들어갔습니다.md
+  - 26-04-28 12-20 Trump 암살 시도 혐의는 백악관 행사 보안을 다시 흔들고 있습니다.md
+  - 26-04-28 12-20 이란은 팔리지 않는 원유를 낡은 저장시설에 밀어 넣고 있습니다.md
+  - 26-04-28 12-27 Drahi의 280억달러 매각은 채권자보다 창업자에게 더 빛나고 있습니다.md
+  - 26-04-28 12-27 중국은 BHP 철광석 항만 재고의 거래를 다시 풀었습니다.md
+  - 26-04-28 12-27 Chagos 협정은 Diego Garcia 기지와 Trump 변덕 사이에서 멈췄습니다.md
+  - 26-04-28 12-30 BOJ는 이란 전쟁 속 기준금리를 동결했지만 내부 균열은 커졌습니다.md
+- reviewed_but_skipped: 없음.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-28/bank-of-japan-holds-key-rate-as-middle-east-war-clouds-outlook
+  - wsj: https://www.wsj.com/world/africa/the-indian-ocean-islanders-who-were-pummeled-by-historyand-now-by-trump-too-622004f4
+  - barrons: https://www.barrons.com/articles/stocks-today-earnings-sp500-75eb9510
+  - last_run_kst: 2026-04-28T12:21:44+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_1210.json
+  - tmp/automation_fetch_20260428_1220_second.json
+  - tmp/automation_fetch_20260428_1222_third.json
+  - tmp/automation_news_manifest_20260428_1220.json
+  - tmp/automation_news_manifest_20260428_1227_second.json
+  - tmp/automation_news_manifest_20260428_1230_third.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 6, WSJ 3, Barron's 0
+  - first fetch attempt skipped before browser access due to malformed date format; no files/state changed
+  - Chrome DevTools fetch-batch ok for 9/9, 3/3, 1/1; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 9 + 3 + 1 article batches
+  - validate-dir ok for '26-04-28 12-*.md' with 13 matched files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 20분
+
+## 2026-04-28T11:08:13+09:00
+
+- action: Axios식 NewsUpdate selective batch 발행 + 중복 OpenAI 후보 state-only 정리.
+- result: Bloomberg 4건 발행, WSJ 1건 state-only, Barron's 신규 없음, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건.
+- published_files:
+  - 26-04-28 11-07 삼성SDI는 예상보다 작은 손실로 배터리 반등 기대를 키웠습니다.md
+  - 26-04-28 11-07 CATL은 나트륨이온 저장장치 첫 대형 계약으로 리튬 의존도를 낮추고 있습니다.md
+  - 26-04-28 11-07 Anta는 중국과 인도 관계 개선 속 인도 시장 재진입을 준비합니다.md
+  - 26-04-28 11-07 일본은 BOJ 결정을 앞두고 엔화 방어 준비를 다시 강조했습니다.md
+- reviewed_but_skipped:
+  - WSJ Dollar/Yen market talk: Bloomberg 일본 환시 기사와 중복도가 높고 단신 성격이라 state-only 처리.
+  - Bloomberg OpenAI misses goals: 10:15 배치의 OpenAI 목표 미달 기사와 동일 주제라 state-only로 boundary만 정리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-28/openai-misses-its-own-user-and-sales-goals-wsj-reports
+  - wsj: https://www.wsj.com/finance/currencies/yen-consolidates-as-traders-focus-on-bojs-guidance-4c3a1d3c
+  - barrons: https://www.barrons.com/articles/stocks-today-earnings-sp500-75eb9510
+  - last_run_kst: 2026-04-28T11:07:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_1102.json
+  - tmp/automation_news_manifest_20260428_1109.json
+  - tmp/automation_news_stateonly_20260428_1110_openai.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 4, WSJ 1, Barron's 0
+  - Chrome DevTools fetch-batch ok for 5/5; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 4 Bloomberg articles
+  - validate-dir ok for '26-04-28 11-07*.md' with 4 matched files
+  - post-apply queue found Bloomberg OpenAI duplicate; empty state-only validate/apply ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 6분
+
+## 2026-04-28T10:16:16+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + WSJ 저우선/중복 후보 state-only 정리.
+- result: Bloomberg 8건, WSJ 3건 발행, WSJ 4건 state-only, Barron's 신규 없음, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 8건, WSJ 3건.
+- published_files:
+  - 26-04-28 10-11 뉴질랜드 고용은 이란 전쟁 우려에도 14개월 고점을 찍었습니다.md
+  - 26-04-28 10-11 Advantest 주가는 AI 테스트 장비 기대를 다시 계산하고 있습니다.md
+  - 26-04-28 10-11 호르무즈 위기는 말라카 해협의 취약성을 다시 꺼냈습니다.md
+  - 26-04-28 10-11 Musk와 Altman 재판은 AI 산업의 창업 약속을 배심원 앞에 세웠습니다.md
+  - 26-04-28 10-11 Nissan은 손실 대신 이익 전망으로 구조조정 기대를 살렸습니다.md
+  - 26-04-28 10-11 Dynatrace는 Starboard 지분 보도로 AI 전략 압박을 받았습니다.md
+  - 26-04-28 10-15 한국은 AI 반도체 랠리로 영국을 넘어 세계 8위 증시가 됐습니다.md
+  - 26-04-28 10-15 호르무즈를 빠져나간 첫 LNG 선적은 에너지 시장의 숨통을 시험합니다.md
+  - 26-04-28 10-15 Sheinbaum은 Trump 달래기의 비용을 치르고 있습니다.md
+  - 26-04-28 10-15 OpenAI는 IPO 질주 속 매출과 사용자 목표를 놓쳤습니다.md
+  - 26-04-28 10-15 Trump는 세 번째 암살 시도 뒤 백악관 무도장을 안보 논리로 밀고 있습니다.md
+- reviewed_but_skipped:
+  - WSJ yen/JGB/oil market talks: 1분 단신 성격이고 BOJ·호르무즈 맥락은 Bloomberg/기존 기사와 중복도가 높아 state-only 처리.
+  - WSJ Pentagon journalist escort ruling: 본문은 충분했으나 금융·시장 직접성이 낮고 같은 배치의 OpenAI, Trump security, Mexico/USMCA 리스크보다 우선순위가 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-28/korea-passes-uk-to-become-world-s-eighth-largest-stock-market
+  - wsj: https://www.wsj.com/politics/national-security/appeals-court-says-pentagon-can-temporarily-mandate-escorts-for-journalists-84042f19
+  - barrons: https://www.barrons.com/articles/stocks-today-earnings-sp500-75eb9510
+  - last_run_kst: 2026-04-28T10:15:39+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_1003_selected.json
+  - tmp/automation_fetch_20260428_1004_selected_retry.json
+  - tmp/automation_fetch_20260428_1011_second.json
+  - tmp/automation_news_manifest_20260428_1011.json
+  - tmp/automation_news_manifest_20260428_1015_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 6, WSJ 3, Barron's 0
+  - first fetch attempt skipped before browser access due to malformed automation-scheduled-at string; no files/state changed
+  - Chrome DevTools fetch-batch retry ok for 9/9; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - first validate-manifest/apply-manifest ok for 6 Bloomberg articles; WSJ 3 market talks closed state-only
+  - post-first-apply queue: Bloomberg 2, WSJ 6, Barron's 0
+  - second Chrome DevTools fetch-batch ok for 6/6; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - second validate-manifest/apply-manifest ok for 2 Bloomberg + 3 WSJ articles; WSJ Pentagon closed state-only
+  - validate-dir ok for '26-04-28 10-*.md' with 11 matched files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 14분
+
+## 2026-04-28T09:13:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + WSJ 단신 state-only 정리.
+- result: Bloomberg 6건, Barron's 1건 발행, WSJ 1건 state-only, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 6건, Barron's 1건.
+- published_files:
+  - 26-04-28 09-07 CATL은 홍콩 주식 배치를 최저가로 확정했습니다.md
+  - 26-04-28 09-07 이란 원유 저장 여유는 22일 이하로 줄었습니다.md
+  - 26-04-28 09-07 영국은 더 큰 재정 완충 장치를 요구받고 있습니다.md
+  - 26-04-28 09-07 영국 소매업체들은 소비 둔화 속 할인 경쟁을 키우고 있습니다.md
+  - 26-04-28 09-10 일본은 미국 없는 아시아 안보의 접착제가 되려 합니다.md
+  - 26-04-28 09-10 중국 전기차 주식은 BYD와 Geely 실적으로 갈립니다.md
+  - 26-04-28 09-10 빅테크 실적 주간은 높은 기대와 이란 비용을 함께 시험합니다.md
+- reviewed_but_skipped:
+  - Bloomberg Starmer/Mandelson parliament showdown: 본문은 충분했으나 금융·시장 직접성이 낮아 CATL 최신 경계까지 state-only 처리.
+  - WSJ gold/Iran proposal market talk: 1분짜리 금 가격 단신이고 08시대 호르무즈·이란 제안 기사와 중복도가 높아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/opinion/articles/2026-04-28/japan-can-help-asia-live-without-the-us
+  - wsj: https://www.wsj.com/finance/commodities-futures/gold-edges-higher-as-investors-assess-irans-proposal-to-u-s-a75d5ac6
+  - barrons: https://www.barrons.com/articles/stocks-today-earnings-sp500-75eb9510
+  - last_run_kst: 2026-04-28T09:12:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0903_bloomberg.json
+  - tmp/automation_fetch_20260428_0910_second.json
+  - tmp/automation_fetch_20260428_0912_wsj_gold.json
+  - tmp/automation_news_manifest_20260428_0907.json
+  - tmp/automation_news_manifest_20260428_0910_second.json
+  - tmp/automation_news_statefix_20260428_0912_wsj_gold.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 5, WSJ 0, Barron's 0
+  - post-first-apply queue: Bloomberg 2, WSJ 0, Barron's 1; all three fetched and published in second batch
+  - post-second-apply queue: WSJ 1; fetched, confirmed short duplicate market-talk, state-only closed
+  - Chrome DevTools fetch-batch ok for 5/5, 3/3, 1/1; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 4 + 3 article batches; empty statefix validate/apply ok
+  - validate-dir ok for '26-04-28 09-07*.md' and '26-04-28 09-10*.md'
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 11분
+
+## 2026-04-28T08:16:52+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + 새 Bloomberg 후보 후속 처리.
+- result: Bloomberg 6건, Barron's 1건 발행, WSJ 신규 없음, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 6건, Barron's 1건.
+- published_files:
+  - 26-04-28 08-12 캐나다는 작은 관세 합의보다 불리한 거래를 피하려 합니다.md
+  - 26-04-28 08-12 유가는 호르무즈 봉쇄와 이란 제안을 동시에 가격에 넣고 있습니다.md
+  - 26-04-28 08-12 아시아 증시는 빅테크 실적과 호르무즈 리스크 사이에서 출발합니다.md
+  - 26-04-28 08-12 베트남 가스 수입은 중동에서 미국으로 빠르게 이동하고 있습니다.md
+  - 26-04-28 08-12 Rivian CEO 보상은 전기차 침체 속 머스크식 인센티브를 시험합니다.md
+  - 26-04-28 08-12 Berkshire의 작은 주식들은 Abel 체제에서 더 엄격한 시험을 받습니다.md
+  - 26-04-28 08-14 중국은 바이오뱅크를 국가 전략 인프라로 키우고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg gold/Iran-war 단신: 호르무즈·유가 기사와 중복도가 높고 본문이 짧아 state-only 처리.
+  - Bloomberg Mexico cartel arrest: 치안/범죄 이슈이나 글로벌 시장 직접성이 제한적이라 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/features/2026-04-27/china-races-to-build-world-s-largest-biobank-to-rival-us-drugs-research
+  - wsj: https://www.wsj.com/opinion/karim-khan-icc-prosecutor-benjamin-netanyahu-qatar-israel-7b62d474
+  - barrons: https://www.barrons.com/articles/berkshires-dominos-holding-another-loser-ff48b946
+  - last_run_kst: 2026-04-28T08:14:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0809_selected.json
+  - tmp/automation_fetch_20260428_0813_second.json
+  - tmp/automation_news_manifest_20260428_0812.json
+  - tmp/automation_news_manifest_20260428_0814_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 7, WSJ 0, Barron's 1
+  - Chrome DevTools fetch-batch ok for 8/8 initial probe, then 6/6 selected, then 1/1 second; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 6 + 1 article batches
+  - validate-dir --glob '26-04-28 08-*.md' ok for 7 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 14분
+
+## 2026-04-28T07:09:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + 06시대 기존 반영분 검증.
+- result: Bloomberg 3건, WSJ 3건, Barron's 2건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 3건, WSJ 3건, Barron's 2건.
+- published_files:
+  - 26-04-28 07-04 시장은 이란 전쟁과 관세보다 AI와 실적을 보고 있습니다.md
+  - 26-04-28 07-04 Engie Brasil은 지라우 지분 인수를 위해 20억달러 증자를 준비합니다.md
+  - 26-04-28 07-04 중국은 Meta의 Manus 인수를 막아 AI 인재 유출 공포를 드러냈습니다.md
+  - 26-04-28 07-04 미국 증시는 Nvidia 신고가와 소비 둔화를 동시에 가격에 넣었습니다.md
+  - 26-04-28 07-04 초대형 비상장사는 개인 투자자가 들어가기 전에 거의 완성되고 있습니다.md
+  - 26-04-28 07-04 물 부족 투자는 장기 테마지만 단기 주문 공백을 지나야 합니다.md
+  - 26-04-28 07-04 잠잠한 미국 채권시장은 큰 재가격을 기다리고 있습니다.md
+  - 26-04-28 07-08 뉴욕-뉴저지 Gateway 터널은 허드슨강 굴착 계약으로 큰 고비를 넘었습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Schools/Carney newsletter: 교육 이슈 또는 직전 캐나다 국부펀드·Shell/ARC 보도와 중복도가 높아 state-only 처리.
+  - WSJ Qatar ICC, California wealth tax, home distilling, Secret Service, Iran op-eds, Basic Materials Market Talk: 의견·단신 성격이 강하거나 이번 배치의 AI·증시·IPO 구조 기사보다 우선순위가 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/ny-nj-gateway-tunnel-awards-contract-to-dig-under-hudson-river
+  - wsj: https://www.wsj.com/opinion/karim-khan-icc-prosecutor-benjamin-netanyahu-qatar-israel-7b62d474
+  - barrons: https://www.barrons.com/articles/the-world-is-getting-thirstier-xylem-and-4-other-ways-to-invest-in-water-441b7f6a
+  - last_run_kst: 2026-04-28T07:08:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0701_selected.json
+  - tmp/automation_fetch_20260428_0707_second.json
+  - tmp/automation_news_manifest_20260428_0704.json
+  - tmp/automation_news_manifest_20260428_0708_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - 06:06/06:08 existing NewsUpdate files already present and validate-dir ok
+  - first post-06 queue: Bloomberg 4, WSJ 10, Barron's 2
+  - Chrome DevTools fetch-batch ok for 7/7, then 1/1; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 7 + 1 article batches
+  - validate-dir --glob '26-04-28 07-*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 8분
+
+## 2026-04-28T05:08:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 발행 + 신규 저우선 후보 state-only 정리.
+- result: WSJ 1건, Barron's 5건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: WSJ 1건, Barron's 5건.
+- published_files:
+  - 26-04-28 05-06 미국 천연가스는 중동보다 날씨를 기다립니다.md
+  - 26-04-28 05-06 GM 실적은 관세 다음으로 비싼 휘발유를 시험받습니다.md
+  - 26-04-28 05-06 양자컴퓨터 주식은 2025년 급등 뒤 현실 검증을 받고 있습니다.md
+  - 26-04-28 05-06 코카콜라는 가격 인상 피로와 제로슈거 전환을 동시에 시험받습니다.md
+  - 26-04-28 05-06 Adobe는 AI 업데이트에도 AI 네이티브 경쟁 압박을 피하지 못했습니다.md
+  - 26-04-28 05-06 S&P 500 반등은 1982년을 닮았지만 조건은 훨씬 까다롭습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Ecuador political parties: 민주주의 후퇴 이슈지만 시장 직접성과 글로벌 금융 충격이 제한적이라 state-only 처리.
+  - WSJ Jimmy Kimmel/Melania Trump: DIS/미디어 정치 압박 성격은 있으나 금융 직접성이 낮아 state-only 처리.
+  - Barron's advisor referral relationships: 자문업 영업 팁 기사라 시장·정책·기업 임팩트가 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/ecuador-dissolves-two-political-parties-ahead-of-local-elections
+  - wsj: https://www.wsj.com/business/media/jimmy-kimmel-melania-trump-widow-comments-40f9478a
+  - barrons: https://www.barrons.com/articles/gm-earnings-stock-gas-93766a0d
+  - last_run_kst: 2026-04-28T05:06:00+09:00
+- artifacts:
+  - tmp/automation_news_manifest_20260428_0506.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 1, WSJ 2, Barron's 6
+  - Chrome DevTools fetch-batch ok for 6/6 twice; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 6 article batch
+  - validate-dir --glob '26-04-28 05-06*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 6분
+
+## 2026-04-28T04:12:13+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + 중복/저우선 후보 state-only 정리.
+- result: Bloomberg 6건, WSJ 1건, Barron's 2건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 6건, WSJ 1건, Barron's 2건.
+- published_files:
+  - 26-04-28 04-08 Blue Owl BDC 투자자들은 헐값 공개매수보다 기다림을 택했습니다.md
+  - 26-04-28 04-08 DeFi 최대 구제작전은 코드가 법이라는 약속을 흔들었습니다.md
+  - 26-04-28 04-08 브라질은 Kalshi와 Polymarket을 불법 도박으로 막았습니다.md
+  - 26-04-28 04-08 미 육군은 지연된 General Dynamics 탄약공장을 다시 밀고 갑니다.md
+  - 26-04-28 04-08 대법원은 Bayer의 Roundup 경고 책임에 날카로운 질문을 던졌습니다.md
+  - 26-04-28 04-08 Meta는 AI 데이터센터 전력을 우주 태양광에서 찾고 있습니다.md
+  - 26-04-28 04-08 미 국방부는 Gemini를 AI 도구상자에 추가했습니다.md
+  - 26-04-28 04-10 Starboard는 Flowserve 지분을 쌓고 마진 변화를 압박합니다.md
+  - 26-04-28 04-10 Kalshi는 Jump Trading 유동성으로 첫 블록트레이드를 성사시켰습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Carney war-bond sovereign fund: 01시대 캐나다 국부펀드 기사와 중복도가 높아 state-only 처리.
+  - Bloomberg King Charles visit / Republican ballroom after dinner shooting: 직전 WSJ 정치폭력 기사와 중복·시장 직접성 제한으로 state-only 처리.
+  - WSJ America Needs Democrats to Pounce: 정치 의견/논평 성격이 강하고 같은 폭력 리스크가 이미 커버되어 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/starboard-is-said-to-build-stake-in-flowserve-push-for-changes
+  - wsj: https://www.wsj.com/opinion/america-needs-democrats-to-pounce-95022290
+  - barrons: https://www.barrons.com/articles/meta-is-trying-to-harvest-the-sun-cc5d41c8
+  - last_run_kst: 2026-04-28T04:10:22+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0402_selected.json
+  - tmp/automation_fetch_20260428_0409_second.json
+  - tmp/automation_news_manifest_20260428_0415.json
+  - tmp/automation_news_manifest_20260428_0410_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 7, WSJ 2, Barron's 2; post-apply second queue found Bloomberg 2 and published both
+  - Chrome DevTools fetch-batch ok for 7/7, then 2/2; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 7 + 2 article batches
+  - validate-dir ok for '26-04-28 04-08*.md' and '26-04-28 04-10*.md'
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 11분
+
+## 2026-04-28T03:18:36+09:00
+
+- action: Axios식 NewsUpdate selective batch 발행 + Shell/ARC 중복 후보 state-only 정리.
+- result: Bloomberg 8건, WSJ 1건, Barron's 2건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 8건, WSJ 1건, Barron's 2건.
+- published_files:
+  - 26-04-28 03-12 반도체 슈퍼사이클은 모두의 승리를 약속하지 않습니다.md
+  - 26-04-28 03-12 베네수엘라 석유 부활은 사모신용 자금을 다시 부르고 있습니다.md
+  - 26-04-28 03-12 사모신용 붐은 펀드 금융을 1조달러 시장으로 키웠습니다.md
+  - 26-04-28 03-12 미국은 이란의 호르무즈 통제권을 정상화할 수 없다고 봅니다.md
+  - 26-04-28 03-12 미국 기업들은 채권 발행 창구를 붙잡았습니다.md
+  - 26-04-28 03-12 EU는 안드로이드의 AI 문을 경쟁 서비스에 열라고 압박합니다.md
+  - 26-04-28 03-12 전력망 자산은 데이터센터 수요 속 60억달러 거래 대상이 됐습니다.md
+  - 26-04-28 03-12 구글 연구진은 군사용 기밀 AI 계약에 선을 그으라고 요구했습니다.md
+  - 26-04-28 03-12 미국 반정부 폭력은 30년 만의 고점으로 치솟았습니다.md
+  - 26-04-28 03-12 증시 리더십은 빅테크에서 더 작은 반도체주로 번지고 있습니다.md
+  - 26-04-28 03-12 Critical Metals는 그린란드 희토류 지배권을 8억3500만달러에 굳히려 합니다.md
+- reviewed_but_skipped:
+  - Bloomberg Treasuries/oil auctions and Bayer Roundup: fetched but body too short for rich Axios output, state advanced through later Bloomberg boundary.
+  - Bloomberg DC Press Gala suspect: security event covered with broader WSJ political-violence article; short Bloomberg follow-up stayed state-only.
+  - Bloomberg Grupo Mexico/Saavi and Shell/ARC Carney pivot: lower priority or duplicate of recent power/energy M&A coverage; Shell/ARC moved state-only to close queue.
+  - Bloomberg Meta-Manus and Trump humiliated newsletter: duplicate of prior published items.
+  - WSJ opinion/roundup and Barron's crude/VC/Sensient/OpenAI/biotech/layoffs: lower priority, roundup, or duplicate relative to selected batch.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/shell-s-arc-deal-seen-as-win-for-mark-carney-s-pro-oil-pivot
+  - wsj: https://www.wsj.com/politics/policy/the-year-of-the-molotov-cocktail-american-antigovernment-violence-hits-a-30-year-high-bca03a67
+  - barrons: https://www.barrons.com/articles/markets-near-record-highs-tech-stocks-lead-the-way-67e8f7ec
+  - last_run_kst: 2026-04-28T03:13:30+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0302_selected.json
+  - tmp/automation_fetch_20260428_0314_second.json
+  - tmp/automation_news_manifest_20260428_0312.json
+  - tmp/automation_news_statefix_20260428_0313_shell_arc.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 21, WSJ 4, Barron's 8; post-apply one Shell/ARC duplicate closed state-only
+  - Chrome DevTools fetch-batch ok for 12/12, then 3/3; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 11 articles; validate-dir --glob '26-04-28 03-12*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - long NFD filename truncation on one article was repaired by shortening the filename and revalidating
+- runtime: 약 18분
+
+## 2026-04-28T01:09:37+09:00
+
+- action: Axios식 NewsUpdate selective batch 발행 + 저우선순위 Bloomberg 뉴스레터 state-only 정리.
+- result: Bloomberg 4건, WSJ 1건, Barron's 2건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건, WSJ 1건, Barron's 2건.
+- published_files:
+  - 26-04-28 01-15 에너지 통화는 이란 전쟁의 새 환율 베팅이 됐습니다.md
+  - 26-04-28 01-15 Citadel은 이란 리스크 완화가 주식과 채권을 함께 밀 수 있다고 봅니다.md
+  - 26-04-28 01-15 인도 은행은 글로벌 기준에 맞춰 충당금을 더 쌓아야 합니다.md
+  - 26-04-28 01-15 멕시코는 6월 말 무디스 신용등급 판정을 앞두고 있습니다.md
+  - 26-04-28 01-15 캐나다는 트럼프 관세 압박 속 첫 국부펀드를 띄웁니다.md
+  - 26-04-28 01-15 Seagate와 Western Digital은 AI 저장장치 부족의 승자가 되고 있습니다.md
+  - 26-04-28 01-15 방산주는 이란 전쟁과 1조5000억달러 예산에도 약했습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Sun Pharma/Eli Lilly health-care M&A newsletter: 직전 Sun/Lilly/Thermo 개별 기사와 중복도가 높아 state-only 경계 처리.
+  - Bloomberg Polish TikTok charity, RBC trading hires, Virginia redistricting: 금융·시장 직접성이 낮아 미발행.
+  - Bloomberg Keir Starmer royal-Trump newsletter: 외교 의전 뉴스레터 성격이 강해 최종 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-27/has-keir-starmer-played-his-last-royal-trump-card-too-early
+  - wsj: https://www.wsj.com/world/americas/canada-to-launch-sovereign-wealth-fund-prime-minister-carney-says-c2ad9928
+  - barrons: https://www.barrons.com/articles/seagate-western-digital-earnings-stock-storage-demand-12cd15e6
+  - last_run_kst: 2026-04-28T01:18:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0103_selected.json
+  - tmp/automation_news_manifest_20260428_0115.json
+  - tmp/automation_news_statefix_20260428_0118_final.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 8, WSJ 1, Barron's 2
+  - Chrome DevTools fetch-batch ok for 7/7, preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 7 article batch; validate-dir --glob '26-04-28 01-15*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+- runtime: 약 17분
+
+## 2026-04-27T23:19:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + 중복 state-only 정리.
+- result: Bloomberg 9건, Barron's 3건, WSJ 1건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 9건, Barron's 3건, WSJ 1건.
+- published_files:
+  - 26-04-27 23-18 콜롬비아는 대선을 앞두고 44억달러 채권을 되샀습니다.md
+  - 26-04-27 23-18 Hut 8은 구글 연계 데이터센터 채권을 팔고 있습니다.md
+  - 26-04-27 23-18 중국의 저가 AI는 실리콘밸리의 가격 논리를 흔들고 있습니다.md
+  - 26-04-27 23-18 Pimco는 전시 중동의 사모채권 자금줄이 됐습니다.md
+  - 26-04-27 23-18 독일 총리는 트럼프가 이란 협상에서 굴욕을 당한다고 말했습니다.md
+  - 26-04-27 23-18 OpenAI는 Microsoft 독점 판매권에서 벗어났습니다.md
+  - 26-04-27 23-18 Nvidia 연계 데이터센터는 45억달러 정크본드 시장을 두드립니다.md
+  - 26-04-27 23-18 BYD 할인은 중국 전기차 가격전쟁이 더 빨라졌다는 신호입니다.md
+  - 26-04-27 23-18 독일 재무부는 전쟁 충격에 부채 브레이크 예외를 열어뒀습니다.md
+  - 26-04-27 23-18 Peloton은 Spotify 제휴로 해외 노출을 넓히려 합니다.md
+  - 26-04-27 23-18 Lilly의 다음 비만약은 Foundayo보다 더 큰 촉매가 될 수 있습니다.md
+  - 26-04-27 23-18 GE Vernova 주가는 폭등 뒤 투자의견 하향을 맞았습니다.md
+  - 26-04-27 23-18 Thermo Fisher는 미생물 사업을 Astorg에 매각합니다.md
+- reviewed_but_skipped:
+  - WSJ OpenAI/Microsoft: 같은 핵심을 Bloomberg 원문으로 발행해 state-only 처리.
+  - WSJ King Charles U.S. visit: 정치/외교 의전 성격이 강하고 시장 직접성이 낮아 state-only 처리.
+  - Barron's Shell Canada acquisition: 직전 22:14 Bloomberg Shell-ARC 인수 기사와 중복되어 state-only 처리.
+  - Bloomberg Suja IPO, AI computer column, UK Mandelson probe, EM stocks, Real/ReMax, Africa fuel frontier 등: 이번 배치의 AI 인프라 신용, 중국 AI/EV, 중동 전쟁 금융, 독일 재정, 개별 주식 촉매보다 우선순위가 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/colombia-buys-back-4-4-billion-in-bonds-weeks-before-election
+  - wsj: https://www.wsj.com/tech/ai/openai-and-microsoft-strike-truce-redrawing-once-tense-partnership-9ae22700
+  - barrons: https://www.barrons.com/articles/shell-makes-16-billion-canadian-acquisition-8a201e38
+  - last_run_kst: 2026-04-27T23:18:30+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_2303_selected.json
+  - tmp/automation_fetch_20260427_2317_wsj_second.json
+  - tmp/automation_news_manifest_20260427_2320.json
+  - tmp/automation_news_manifest_20260427_2324_second.json
+  - tmp/automation_news_statefix_20260427_2325_final.json
+  - tmp/automation_news_statefix_20260427_2318_timestamp.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 15, WSJ 37, Barron's 3
+  - Chrome DevTools fetch-batch ok for 12/12, then WSJ 1/1, preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 12 + 1 article batches; state-only manifests ok
+  - validate-dir --glob '26-04-27 23-18*.md' ok for 13 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 17분
+
+## 2026-04-27T22:16:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행.
+- result: Bloomberg 5건, WSJ 2건, Barron's 2건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 5건, WSJ 2건, Barron's 2건.
+- published_files:
+  - 26-04-27 22-14 호르무즈 이중 봉쇄는 선박 통항을 거의 멈췄습니다.md
+  - 26-04-27 22-14 Intel은 아일랜드 팹 지분을 되사기 위해 채권시장에 나섰습니다.md
+  - 26-04-27 22-14 Shell은 캐나다 ARC를 136억달러에 사며 LNG 기반을 키웁니다.md
+  - 26-04-27 22-14 Moody's는 중국 전망을 안정적으로 올리며 회복력을 인정했습니다.md
+  - 26-04-27 22-14 Montage는 AI 서버 칩 출하로 사상 최대 이익을 냈습니다.md
+  - 26-04-27 22-14 Ligand는 Xoma 인수로 로열티 포트폴리오를 두 배 넘게 키웁니다.md
+  - 26-04-27 22-14 Nordex는 실적 서프라이즈로 24년 만의 주가 고점에 올랐습니다.md
+  - 26-04-27 22-14 Verizon은 13년 만의 1분기 가입자 순증으로 주가를 끌어올렸습니다.md
+  - 26-04-27 22-14 Tesla는 Musk의 2018년 보상 주식 3억400만주를 거래 가능하게 등록했습니다.md
+- reviewed_but_skipped:
+  - Bloomberg EU budget, Swatch/SG SRT/Vinted/critical minerals/health/PE/Codelco/UK IPO/shoplifting/Spotify/market-live/political and repeat AI items: fetched 후보보다 우선순위가 낮거나 중복·라운드업 성격이 강해 state-only 처리.
+  - WSJ Meta-Manus and White House dinner: 직전 배치에서 이미 유사 핵심을 발행해 state-only 처리.
+  - Barron's ARK AMD/Amazon, weekly Fed/earnings, United-American, market-week, Qualcomm/OpenAI: 중복·라운드업·상대 우선순위 이유로 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-27/eu-debates-new-long-term-mff-budget-amid-divisions
+  - wsj: https://www.wsj.com/health/pharma/ligand-pharmaceuticals-is-buying-xoma-for-nearly-740-million-5bb4a22f
+  - barrons: https://www.barrons.com/articles/amd-stock-amazon-cathie-wood-ark-b3a4d25e
+  - last_run_kst: 2026-04-27T22:14:44+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_2207_crosssource.json
+  - tmp/automation_news_manifest_20260427_2220.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 38, WSJ 4, Barron's 8
+  - Chrome DevTools fetch-batch ok for 9/9, preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 9 files
+  - validate-dir --glob '26-04-27 22-14*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+- runtime: 약 9분
+
+## 2026-04-27T21:11:30+09:00
+
+- action: Axios식 NewsUpdate run 중 Bloomberg 봇 차단 원인 진단 및 하네스 완화 패치.
+- result: 21:06-21:08 KST 재수집 로그에서 Bloomberg 첫 URL은 성공했으나 후속 4개 Bloomberg URL이 동일 PerimeterX `Are you a robot?` block reference ID로 실패함을 확인. 같은 배치 내부 접근 간격은 20초로 지켜졌지만, Bloomberg 기준으로는 짧고 차단 이후에도 후속 URL을 계속 열어 위험이 커지는 구조였음.
+- code_changes:
+  - `scripts/safari_fetch.py`: 기본 Bloomberg site throttle을 20초에서 45초로 확대.
+  - `scripts/news_update_harness.py`: fetch-batch에서 봇 차단 신호를 감지하면 같은 사이트 후속 URL을 브라우저로 열지 않고 `skip_reason=site_bot_block`으로 중단.
+- artifacts:
+  - tmp/news_fetch_20260427_2102.json
+- verification:
+  - `python3 -m py_compile scripts/safari_fetch.py scripts/news_update_harness.py` 통과.
+  - bot block helper smoke test 통과.
+- note: 이번 차단 이후 Bloomberg는 추가로 재시도하지 않고 식히는 쪽으로 판단. NewsUpdate 기사 manifest/apply는 진행하지 않음.
+- runtime: 약 9분
+
+## 2026-04-27T20:15:18+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행.
+- result: Bloomberg 6건, WSJ 4건, Barron's 2건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 6건, WSJ 4건, Barron's 2건.
+- published_files:
+  - 26-04-27 20-10 세계 식량 공급은 전쟁과 폭염과 무역 충격을 동시에 맞고 있습니다.md
+  - 26-04-27 20-10 Seaport는 우울증 신약으로 2억1240만달러 IPO에 나섭니다.md
+  - 26-04-27 20-10 MAHA 엄마들은 Roundup 재판을 공화당 정치 문제로 만들고 있습니다.md
+  - 26-04-27 20-10 AI 주식은 칩 랠리의 숫자보다 마진 가정을 봐야 합니다.md
+  - 26-04-27 20-10 워싱턴 힐튼 총격은 백악관 만찬의 경호 허점을 드러냈습니다.md
+  - 26-04-27 20-10 이번 주 증시는 빅테크 실적과 Fed와 이란 전쟁을 동시에 봅니다.md
+  - 26-04-27 20-10 Qualcomm은 OpenAI 스마트폰 칩 보도에 급등했습니다.md
+  - 26-04-27 20-14 FanDuel은 예측시장 붐을 뒤늦게 따라잡으려 합니다.md
+  - 26-04-27 20-14 브라질 신용펀드 자금이 사모대출로 옮겨가고 있습니다.md
+  - 26-04-27 20-14 뉴욕은 맨해튼과 JFK 사이 전기 에어택시를 시험합니다.md
+  - 26-04-27 20-14 Lilly는 Ajax 인수로 혈액암 파이프라인을 보강합니다.md
+  - 26-04-27 20-14 양자컴퓨팅 기업들은 기술보다 먼저 증시로 달려가고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Domino's Pizza: 직전 19시대 Barron's Domino's 실적 기사와 중복도가 높고 본문 1698자로 상대적으로 얇아 state-only 처리.
+  - Bloomberg beer stocks, Germany cyberattack, LSEG retail bonds: 본문은 수집됐지만 이번 배치의 식량공급·IPO·AI·정책/안보·브라질 신용·양자컴퓨팅 후보보다 우선순위가 낮아 state-only 처리.
+  - WSJ duration/financial services/energy market talk 후보: 단신/라운드업 성격이 강해 state-only 처리.
+  - Bloomberg DC gala newsletter: 동일 사건은 WSJ의 Washington Hilton 재구성 기사가 더 구체적이라 Bloomberg head만 state boundary로 사용.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/fanduel-pushes-into-prediction-markets-as-users-download-kalshi-polymarket
+  - wsj: https://www.wsj.com/cio-journal/quantum-computing-companies-are-in-a-race-to-go-public-303f8a87
+  - barrons: https://www.barrons.com/articles/big-tech-earnings-fed-rates-iran-things-to-know-today-e2f34519
+  - last_run_kst: 2026-04-27T20:14:23+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_2003_crosssource.json
+  - tmp/automation_fetch_20260427_2012_second.json
+  - tmp/automation_news_manifest_20260427_2010.json
+  - tmp/automation_news_manifest_20260427_2014_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - first news_update_queue: Bloomberg 8, WSJ 6, Barron's 2
+  - Chrome DevTools fetch-batch ok for 13/13, then 5/5; preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest/apply-manifest ok for 7 + 5 article batches
+  - validate-dir --glob '26-04-27 20-10*.md' and '26-04-27 20-14*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 13분
+
+## 2026-04-27T18:05:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행.
+- result: Bloomberg 4건 발행, WSJ 0건 state-only, Barron's 0건, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건.
+- published_files:
+  - 26-04-27 18-04 파운드 옵션시장은 정책과 선거와 전쟁 리스크를 동시에 사고 있습니다.md
+  - 26-04-27 18-04 중국은 Meta의 20억달러 Manus 인수를 되돌리려 합니다.md
+  - 26-04-27 18-04 닛산은 5년 만의 영업손실을 가까스로 피했습니다.md
+  - 26-04-27 18-04 RBC BlueBay는 호르무즈 한 달 지연이면 유럽 침체가 불가피하다고 봅니다.md
+- reviewed_but_skipped:
+  - Bloomberg Romania government no-confidence push: 본문 1483자로 짧고 시장 직접성이 이번 배치의 FX/AI/earnings/Hormuz-Europe 후보보다 약해 state-only 처리.
+  - WSJ dollar/oil/live market 후보 3건: 중동·유가 맥락이 직전 및 이번 Bloomberg/RBC 원문과 중복되어 최신 WSJ head만 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/traders-buy-pound-protection-on-policy-election-and-war-risks
+  - wsj: https://www.wsj.com/finance/currencies/asian-currencies-mostly-edge-higher-as-traders-weigh-mideast-developments-d1d60607
+  - barrons: https://www.barrons.com/articles/oil-price-today-trump-iran-talks-18fb15be
+  - last_run_kst: 2026-04-27T18:04:02+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1802_bloomberg.json
+  - tmp/automation_news_manifest_20260427_1804.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 5, WSJ 3, Barron's 0
+  - Chrome DevTools fetch-batch ok for Bloomberg 5/5, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest/apply-manifest ok for 4 files
+  - validate-files and validate-dir --glob '26-04-27 18-04*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+- runtime: 약 4분
+
+## 2026-04-27T15:11:32+09:00
+
+- action: Axios식 NewsUpdate selective batch 3회 발행.
+- result: Bloomberg 7건, Barron's 2건 발행, WSJ 0건 state-only, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 7건, Barron's 2건.
+- published_files:
+  - 26-04-27 15-05 미-이란 협상 정체는 파키스탄 중재의 한계를 드러냅니다.md
+  - 26-04-27 15-05 인도는 역외 루피 거래 감시망을 더 촘촘히 만들고 있습니다.md
+  - 26-04-27 15-05 광둥 전력시장은 이란 전쟁의 비용을 공장 계약서에서 맞고 있습니다.md
+  - 26-04-27 15-05 필리핀 부통령 일가 수사는 중앙은행 독립성 논쟁으로 번졌습니다.md
+  - 26-04-27 15-05 Good American은 AI를 재고와 고객 데이터에 쓰고 디자인은 남겨둡니다.md
+  - 26-04-27 15-05 중국 소비 회복은 쇼핑몰보다 사회안전망에서 시작될 수 있습니다.md
+  - 26-04-27 15-09 말리 국방장관 피살은 서아프리카 안보 공백을 더 키웠습니다.md
+  - 26-04-27 15-09 미국의 Hengli 제재는 중국 석화 공급망까지 흔들고 있습니다.md
+  - 26-04-27 15-11 SpaceX는 새 매그니피센트 세븐 후보로 통신업까지 흔들고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg FTSE 100 live blog: 집계형 라이브블로그라 state-only 처리.
+  - WSJ Treasury yields / oil 단신 2건: 중동·유가 맥락은 Bloomberg 미-이란 협상 및 광둥 전력·Hengli 제재 기사와 겹치고 단문성이 강해 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/live-blog/2026-04-27/ftse-100-live-iran-war-trump-pound-uk-stocks-usd-oil-prices-hormuz-what-s-moving-uk-markets-right-now-markets-today-mogryt22
+  - wsj: https://www.wsj.com/finance/investing/jgb-futures-edge-lower-as-bojs-two-day-meeting-kicks-off-7273fafa
+  - barrons: https://www.barrons.com/articles/get-ready-for-new-magnificent-seven-spacex-710acb41
+  - last_run_kst: 2026-04-27T15:11:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1502_bloomberg.json
+  - tmp/automation_fetch_20260427_1504_barrons.json
+  - tmp/automation_fetch_20260427_1507_bloomberg_second.json
+  - tmp/automation_fetch_20260427_1510_barrons_second.json
+  - tmp/automation_news_manifest_20260427_1505.json
+  - tmp/automation_news_manifest_20260427_1509_second.json
+  - tmp/automation_news_manifest_20260427_1511_third.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - Chrome DevTools fetch-batch ok for Bloomberg 7건 and Barron's 2건, preflight_degraded=false
+  - validate-manifest/apply-manifest ok for all 9 files
+  - validate-files and validate-dir --glob '26-04-27 15-*.md' ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome/news_update_queue processes after completion
+- runtime: 약 10분
+
+## 2026-04-27T14:13:13+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행.
+- result: Bloomberg 10건, WSJ 1건, Barron's 1건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 10건, WSJ 1건, Barron's 1건.
+- published_files:
+  - 26-04-27 14-11 중국 인민은행은 유동성 과잉을 조용히 빼고 있습니다.md
+  - 26-04-27 14-11 중국 금속업계는 구리와 알루미늄 랠리로 10년 최고 이익을 냈습니다.md
+  - 26-04-27 14-11 DeepSeek은 새 AI 모델 가격을 75퍼센트 깎았습니다.md
+  - 26-04-27 14-11 중국의 국영 철광석 구매자는 Fortescue와 장기 계약에 다가섰습니다.md
+  - 26-04-27 14-11 Sereact는 결과를 예측하는 로봇 AI에 1억1000만달러를 모았습니다.md
+  - 26-04-27 14-11 영국 중앙은행은 에너지 쇼크 장기전을 시뮬레이션합니다.md
+  - 26-04-27 14-11 폴란드는 방산 지출을 위해 유럽의 새 돈줄을 찾고 있습니다.md
+  - 26-04-27 14-11 베트남은 폭염과 이란 전쟁 속에서 LNG를 기록적으로 사들이고 있습니다.md
+  - 26-04-27 14-11 CK허치슨 항만 매각은 중국 국영 해운사의 참여로 다시 움직입니다.md
+  - 26-04-27 14-11 TSMC 기밀 유출 사건은 반도체 동맹의 내부 보안까지 흔들었습니다.md
+  - 26-04-27 14-11 백악관 기자단 만찬은 총격 소리에 순식간에 대피 현장이 됐습니다.md
+  - 26-04-27 14-11 빅테크 실적 주간은 AI 랠리의 오차범위를 거의 없앴습니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Toyota Sees Sales Decline...`: 본문 680자로 짧아 풍부한 Axios 기사화에는 부적합해 state-only 처리.
+  - Bloomberg `Cairo Relishes Return...`, UK Labour/Barclays/fashion 의견 기사, Silicon newsletter: 이번 배치의 중국 유동성·금속·AI·BOE·방산·LNG·항만·반도체 보안 후보보다 우선순위가 낮거나 주제 중복으로 state-only 처리.
+  - WSJ `China’s Industrial Profit Growth...`: Bloomberg 중국 금속/산업이익 기사와 중복되어 state-only 처리하고 wsj state 경계로 사용.
+  - WSJ `Yen Likely to Remain Weak...`: 단문 시장 코멘트라 독립 기사화보다 state-only 처리.
+  - Barron's `Pay Attention to Areas Primed...`: 상단 Big Tech earnings 기사 우선 발행 후 state-only 처리.
+- fetch_notes:
+  - Chrome DevTools 기본 경로에서 Bloomberg 10건과 추가 Bloomberg/WSJ/Barron's 3건 모두 success=true, paywall=false.
+  - 첫 상태 점검에서 후보가 Bloomberg 17, WSJ 3, Barron's 1이었고, 수집 중 Bloomberg 1건과 Barron's 1건이 추가되어 상단 후보까지 보강 수집.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/china-taps-another-tool-to-drain-excess-liquidity-from-market
+  - wsj: https://www.wsj.com/economy/chinas-industrial-profit-growth-accelerated-in-first-quarter-ee05af3d
+  - barrons: https://www.barrons.com/articles/stocks-tech-earnings-f5231a1a
+  - last_run_kst: 2026-04-27T14:11:53+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1403_bloomberg.json
+  - tmp/automation_fetch_20260427_1410_crosssource.json
+  - tmp/automation_news_manifest_20260427_1411.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - validate-manifest/apply-manifest ok for 12 files
+  - validate-files and validate-dir ok for 12 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 11분
+
+## 2026-04-27T12:08:32+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행 + timestamp 보정.
+- result: Bloomberg 5건 발행, WSJ 0건 state-only, Barron's 0건, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 5건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-27 12-08 인도 증시는 루피 방어와 IT 매도 사이에 갇혔습니다.md
+  - 26-04-27 12-08 아시아 인프라 사모신용은 에너지 전환 자금을 끌어들이고 있습니다.md
+  - 26-04-27 12-08 니켈은 인도네시아 공급 축소에 2년 고점을 찍었습니다.md
+  - 26-04-27 12-08 저가항공사는 25억달러 구제안을 백악관에 요구했습니다.md
+  - 26-04-27 12-08 이란은 호르무즈 재개방과 핵협상 연기를 제안했습니다.md
+- reviewed_but_skipped:
+  - WSJ `Keep DNA a state secret...world leaders summit`: 외교 의전 기사로 시장·정책·산업 직접성이 이번 Bloomberg 후보보다 낮아 state-only 처리.
+  - WSJ `China’s Industrial Profit Growth Accelerated in First Quarter`: 직전 11:14 Bloomberg 중국 산업이익 기사와 중복되어 state-only 처리.
+  - WSJ `Near-Term Risks for Oil Skewed to Upside as Mideast Talks Drag`: 직전 원유·호르무즈 기사들과 주제 중복도가 높아 state-only 처리.
+- fetch_notes:
+  - Chrome DevTools 기본 경로에서 Bloomberg 3건, 후속 2건 모두 성공; preflight_degraded=false, batch_browser_reused=true.
+  - 첫 manifest를 실제 시각보다 앞선 12:13으로 작성해, 반영 직후 파일명을 12:08로 rename하고 allow-empty statefix manifest로 last_run_kst를 12:08:32 KST로 보정.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-27/renewed-rupee-weakness-may-invite-rbi-curbs-it-index-tumbles-to-near-3-year-low
+  - wsj: https://www.wsj.com/politics/how-to-avoid-fistfights-and-dna-leaks-at-a-world-leaders-summit-051741e8
+  - barrons: https://www.barrons.com/articles/stock-futures-trading-sunday-676fbb19
+  - last_run_kst: 2026-04-27T12:08:32+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1204_bloomberg.json
+  - tmp/automation_fetch_20260427_1208_bloomberg_second.json
+  - tmp/automation_news_manifest_20260427_1213.json
+  - tmp/automation_news_manifest_20260427_1208_corrected.json
+  - tmp/automation_news_statefix_20260427_1208.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 3, WSJ 2, Barron's 0; follow-up queue after first fetch surfaced Bloomberg 5, WSJ 3
+  - validate-manifest/apply-manifest ok for 5 files
+  - corrected manifest validate ok; validate-files/validate-dir ok for 5 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 5분
+
+## 2026-04-27T11:15:30+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행.
+- result: Bloomberg 6건, WSJ 4건 발행, Barron's 0건, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 6건, WSJ 4건, Barron's 0건.
+- published_files:
+  - 26-04-27 11-12 중국 세무 단속은 금속 거래의 송장을 죄고 있습니다.md
+  - 26-04-27 11-12 신흥국 주식은 AI와 호르무즈 제안에 사상 최고를 다시 찍었습니다.md
+  - 26-04-27 11-12 골드만은 호르무즈 재고 소진에 원유 전망을 올렸습니다.md
+  - 26-04-27 11-12 중국 해외채 승인은 1000억달러 만기벽 앞에서 느려지고 있습니다.md
+  - 26-04-27 11-12 Keyence는 실적 서프라이즈와 자사주 매입 기대에 급등했습니다.md
+  - 26-04-27 11-12 아시아 통화는 중동과 AI 사이에서 달러 대비 소폭 올랐습니다.md
+  - 26-04-27 11-12 미국 대기업 이익은 전쟁과 소비 불안을 뚫고 넓어지고 있습니다.md
+  - 26-04-27 11-12 호르무즈 긴장은 아시아 원유 가격을 다시 밀어 올렸습니다.md
+  - 26-04-27 11-14 중국 산업이익은 리플레이션 덕에 비용 충격을 넘었습니다.md
+  - 26-04-27 11-14 Musk의 OpenAI 소송은 1800억달러 거버넌스 전쟁입니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Colombia’s Cepeda Seen Defeating Conservative Rivals in Runoff`: 정책/시장 직접성은 있으나 이번 배치의 중국 통계·신용·원자재, AI, 원유, 실적 후보보다 우선순위가 낮아 state-only 처리.
+- fetch_notes:
+  - 첫 fetch-batch 시도는 macOS date 포맷 `%:z`가 `:z`로 들어가 automation lag guard에서 browser preflight 전 정상 스킵됨.
+  - Chrome DevTools 본 배치에서 Bloomberg 첫 건은 성공했지만 이후 4건이 Bloomberg robot check로 실패; 45초 간격 후 chrome-visible 폴백으로 실패 4건 모두 재수집 성공.
+  - WSJ 3건은 첫 Chrome DevTools 배치에서 성공, 후속 2차 후보 2건은 chrome-visible 배치에서 모두 성공.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/china-s-industrial-profits-surge-as-reflation-offsets-cost-shock
+  - wsj: https://www.wsj.com/tech/elon-musk-is-an-underdog-in-his-180-billion-fight-against-openai-32a74332
+  - barrons: https://www.barrons.com/articles/stock-futures-trading-sunday-676fbb19
+  - last_run_kst: 2026-04-27T11:14:47+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1104_batch.json
+  - tmp/automation_fetch_20260427_1105_batch.json
+  - tmp/automation_fetch_20260427_1110_bloomberg_visible_retry.json
+  - tmp/automation_news_manifest_20260427_1120.json
+  - tmp/automation_fetch_20260427_1115_second.json
+  - tmp/automation_news_manifest_20260427_1118_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 6, WSJ 3, Barron's 0
+  - first validate-manifest/apply-manifest ok for 8 files
+  - follow-up news_update_queue surfaced Bloomberg 1, WSJ 1
+  - second validate-manifest/apply-manifest ok for 2 files
+  - validate-dir --glob '26-04-27 11-*.md' ok for 10 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 13분
+
+## 2026-04-27T10:06:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행.
+- result: Bloomberg 2건 발행, WSJ 0건, Barron's 0건, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-27 10-03 Sun Pharma는 Organon 인수로 인도 제약 M&A 기록을 키웁니다.md
+  - 26-04-27 10-04 인도 IT 대기업의 1150억달러 매도는 AI 충격을 가격에 넣고 있습니다.md
+- reviewed_but_skipped:
+  - 없음. 두 후보 모두 Bloomberg 본문 수집이 정상 완료됐고, 첫 건은 인도 대형 해외 M&A, 둘째 건은 인도 IT 실적·AI 전환·섹터 매도세 기사로 Axios 기사화 가치가 충분해 발행.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/india-tech-giants-struggle-to-shake-off-115-billion-rout
+  - wsj: https://www.wsj.com/finance/investing/jgb-futures-edge-lower-as-bojs-two-day-meeting-kicks-off-7273fafa
+  - barrons: https://www.barrons.com/articles/stock-futures-trading-sunday-676fbb19
+  - last_run_kst: 2026-04-27T10:04:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1002_bloomberg.json
+  - tmp/automation_news_manifest_20260427_1003.json
+  - tmp/automation_fetch_20260427_1004_bloomberg_second.json
+  - tmp/automation_news_manifest_20260427_1004_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 1, WSJ 0, Barron's 0
+  - Chrome DevTools first fetch-batch ok 1/1, preflight_degraded=false, batch_browser_reused=true
+  - first validate-manifest/apply-manifest/validate-files ok for 1 file
+  - follow-up news_update_queue surfaced Bloomberg 1
+  - Chrome DevTools second fetch-batch ok 1/1, preflight_degraded=false, batch_browser_reused=true
+  - second validate-manifest/apply-manifest/validate-files ok for 1 file
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 4분
+
+## 2026-04-27T07:04:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행 + Bloomberg state-only 처리.
+- result: WSJ 1건 발행, Bloomberg 0건, Barron's 0건, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 0건, WSJ 1건, Barron's 0건.
+- published_files:
+  - 26-04-27 07-03 캘리포니아 억만장자세는 주민투표 문턱을 넘었습니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Washington Gala Shooter’s Motives Are Under Scrutiny`: Chrome DevTools 수집 성공했으나 Morning Briefing Asia 뉴스레터형 묶음이고, 백악관 만찬/워싱턴 갈라 총격 후속은 이미 여러 차례 발행·state 처리된 사건이라 중복 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-26/washington-gala-shooter-s-motives-are-under-scrutiny
+  - wsj: https://www.wsj.com/politics/policy/californias-billionaire-tax-has-the-signatures-to-make-the-ballot-backers-say-1c2da7bb
+  - barrons: https://www.barrons.com/articles/stock-futures-trading-sunday-676fbb19
+  - last_run_kst: 2026-04-27T07:03:00+09:00
+- artifacts:
+  - tmp/automation_news_manifest_20260427_0703.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 1, WSJ 1, Barron's 0
+  - Chrome DevTools Bloomberg fetch-batch ok 1/1, preflight_degraded=false, batch_browser_reused=true
+  - Chrome DevTools WSJ fetch-batch ok 1/1, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest/apply-manifest/validate-files/validate-dir ok for 1 new file
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 2분
+
+## 2026-04-27T05:38:10+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + state timestamp 보정.
+- result: Bloomberg 4건, WSJ 3건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건, WSJ 3건, Barron's 0건.
+- published_files:
+  - 26-04-27 05-35 Tokyo는 AI를 유용하게 만드는 도시가 되려 합니다.md
+  - 26-04-27 05-35 G7 중앙은행 주간은 채권 매도 신호가 될 수 있습니다.md
+  - 26-04-27 05-35 콜롬비아 폭탄 공격은 대선 전 안보 위기를 키웠습니다.md
+  - 26-04-27 05-35 미국 정부대출 부실은 사모신용보다 큰 신용버블입니다.md
+  - 26-04-27 05-35 Trump 관세는 USMCA를 흔들고 있습니다.md
+  - 26-04-27 05-37 탄소가격은 주요 산업의 숨은 비용을 키우고 있습니다.md
+  - 26-04-27 05-37 기록적 모멘텀 랠리는 의심을 끌어들이고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Chevron CEO Says Venezuela Must Do More for Oil Industry Revival`: Chrome DevTools 수집 성공했으나 본문 675자로 짧아 풍부한 Axios 기사화에는 부적합해 state-only 처리.
+  - Bloomberg `Bond Traders Await Powell Update, Slate of US Treasury Auctions`: 본문 수집 성공했으나 G7 중앙은행/채권 기사와 주제·데이터가 강하게 겹쳐 state-only 처리.
+  - WSJ 상단 오피니언 6건(`A Friendly Federal Assassin`, Fourth Amendment, marijuana, Mamdani/Ken Griffin, foreign-policy traditionalist, Supreme Court scoop): 중복 WHCD/프라이버시 또는 이번 배치의 콜롬비아·신용·USMCA 후보보다 시장·정책 직접성이 낮아 state-only 처리.
+  - WSJ `Spirit Airlines and the New State Capitalism`: 본문 수집 성공했으나 WSJ 중간 후보 3건 제한상 Colombia/credit bubble/USMCA를 우선하고 state-only 처리.
+  - WSJ `Caltech Grad, Teacher of the Month Named as Washington Shooting Suspect`: 기존 백악관 만찬 총격 후속 프로필이라 중복 state-only 처리.
+  - Barron's `Lionsgate’s Michael Wins Weekend Box Office`: 박스오피스 기사로 금융·정책·산업 직접성이 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-26/carbon-emissions-costs-rising-for-oil-majors-other-key-industries
+  - wsj: https://www.wsj.com/us-news/caltech-grad-teacher-of-the-month-named-as-washington-shooting-suspect-310cf6fb
+  - barrons: https://www.barrons.com/articles/lionsgates-michael-weekend-box-office-record-cbdaf415
+  - last_run_kst: 2026-04-27T05:37:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_0514_bloomberg.json
+  - tmp/automation_fetch_20260427_0517_wsj.json
+  - tmp/automation_news_manifest_20260427_0535.json
+  - tmp/automation_fetch_20260427_0537_bloomberg_second.json
+  - tmp/automation_news_manifest_20260427_0545_second.json
+  - tmp/automation_news_statefix_20260427_0537.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 4, WSJ 10, Barron's 1
+  - Chrome DevTools first fetch-batch ok 4/4 Bloomberg, preflight_degraded=false, batch_browser_reused=true
+  - Chrome DevTools WSJ fetch-batch ok 4/4
+  - first validate-manifest/apply-manifest/validate-files ok for 5 files
+  - second news_update_queue surfaced Bloomberg 2, WSJ 1
+  - Chrome DevTools second Bloomberg fetch-batch ok 2/2
+  - second validate-manifest/apply-manifest/validate-files ok for 2 files
+  - state timestamp corrected from accidental future 05:45 to actual 05:37 KST with allow-empty statefix manifest
+  - validate-dir --glob '26-04-27 05-3*.md' ok for all 7 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 25분
+
+## 2026-04-27T04:08:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행.
+- result: Bloomberg 3건, WSJ 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 3건, WSJ 1건, Barron's 0건.
+- published_files:
+  - 26-04-27 04-05 백악관 만찬 공격은 Hilton 보안의 오래된 약점을 다시 드러냈습니다.md
+  - 26-04-27 04-05 6000달러 중국 EV는 에너지 쇼크의 기회를 놓치고 있습니다.md
+  - 26-04-27 04-05 Sergey Brin의 캘리포니아 정치전은 실리콘밸리 자본의 방향 전환입니다.md
+  - 26-04-27 04-06 Gaza의 20년 만의 지방선거는 Hamas 이후 통치 실험의 작은 신호입니다.md
+- reviewed_but_skipped:
+  - 없음. 본문 수집된 4건 모두 원문 길이와 주제 밀도가 충분했고, Bloomberg 3건은 보안 리스크/중국 EV/캘리포니아 부유세 정치전으로 중복도가 낮아 발행.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/another-attack-at-hinckley-hilton-raises-new-security-concerns
+  - wsj: https://www.wsj.com/world/middle-east/gaza-election-vote-b25d8206
+  - barrons: https://www.barrons.com/articles/tillis-clears-kevin-warsh-fed-chair-e45ceb37
+  - last_run_kst: 2026-04-27T04:06:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_0402.json
+  - tmp/automation_news_manifest_20260427_0405.json
+  - tmp/automation_fetch_wsj_20260427_0406.json
+  - tmp/automation_news_manifest_wsj_20260427_0406.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 3, WSJ 0, Barron's 0
+  - Chrome DevTools fetch-batch ok 3/3, automation lag guard within budget, preflight_degraded=false, batch_browser_reused=true
+  - first validate-manifest/apply-manifest/validate-dir ok for 3 files
+  - second news_update_queue surfaced WSJ Gaza election 후보 1건
+  - Chrome DevTools second fetch-batch ok 1/1
+  - second validate-manifest/apply-manifest/validate-dir ok for 1 file
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 6분
+
+## 2026-04-27T02:15:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행 + 2차 WSJ state-only 정리.
+- result: Bloomberg 2건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-27 02-12 🛡️ 이탈리아는 미국이 찾던 중국 해킹 피의자를 넘기려 합니다.md
+  - 26-04-27 02-12 🇮🇱 Bennett-Lapid 연합은 Netanyahu의 선거 구도를 흔듭니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Canadian Province of Manitoba Says It Will Ban Social Media, AI For Youth`: Chrome DevTools 수집 성공했으나 본문 498자로 짧아 풍부한 Axios 기사화에는 부적합해 Bloomberg head state-only 처리.
+  - WSJ `Tillis Drops Objection to Warsh’s Fed Nomination`: 23:06 KST Bloomberg Warsh 인준 기사와 내용이 강하게 중복되어 state-only 처리.
+  - WSJ `Aborted Pakistan Trip Leaves Trump With Tough Choices on Iran Talks`: 01:05 KST 같은 URL/본문 기반으로 이미 발행한 미-이란 협상 기사와 중복되어 state-only 처리.
+  - WSJ `What’s News for April 26`: 집계형 뉴스레터로 주요 구성 요소가 이미 발행 또는 state 처리된 사안들이어서 state-only 처리.
+  - 2차 WSJ opinion 후보 4건(`When School Choice Is No Choice At All`, `U.S. Oil and Gas Fight Tyrants`, `How to Get a Tree to Talk`, `Cutting Law Degree Convolution`): 본문 수집 성공했지만 교육/문화/법학/짧은 에너지 칼럼으로 이번 Axios 기사화 밀도와 시장 직접성에 못 미쳐 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/canadian-province-of-manitoba-says-it-will-ban-social-media-ai-for-youth
+  - wsj: https://www.wsj.com/opinion/when-school-choice-is-no-choice-at-all-a9004ece
+  - barrons: https://www.barrons.com/articles/tillis-clears-kevin-warsh-fed-chair-e45ceb37
+  - last_run_kst: 2026-04-27T02:15:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_0204.json
+  - tmp/automation_news_manifest_20260427_0212.json
+  - tmp/automation_fetch_wsj_second_20260427_0215.json
+  - tmp/automation_news_stateonly_wsj_20260427_0215.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 3, WSJ 3, Barron's 0
+  - Chrome DevTools fetch-batch ok 6/6, automation lag guard within budget, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest/apply-manifest/validate-files/validate-dir ok for 2 new files
+  - second news_update_queue surfaced WSJ opinion candidates 4건
+  - Chrome DevTools second fetch-batch ok 4/4
+  - state-only validate-manifest --allow-empty/apply-manifest --allow-empty ok
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 12분
+## 2026-04-27T01:09:35+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행.
+- result: Bloomberg 1건, WSJ 3건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 3건, Barron's 0건.
+- published_files:
+  - 26-04-27 01-05 ⚖️ Bayer는 Roundup 소송을 대법원에서 줄이려 합니다.md
+  - 26-04-27 01-05 🕊️ 미-이란 협상 결렬은 Trump에게 세 갈래 선택지를 남겼습니다.md
+  - 26-04-27 01-09 🧲 Pentagon은 Malaysia에서 희토류 공급망을 찾았습니다.md
+  - 26-04-27 01-09 🎬 중국 AI 영상모델은 Hollywood와 숏폼 드라마를 파고듭니다.md
+- reviewed_but_skipped:
+  - WSJ `Caltech Grad and Teacher of the Month Cole Allen Named as Washington Shooting Suspect`: 4월 26일 백악관 만찬 총격 이벤트의 suspect profile 후속으로, 이미 정치/안보 이벤트는 발행·state 처리되어 중복도가 높아 state-only 처리.
+  - WSJ `What Happened to Just War? Why Modern Popes Have Become Peace Activists`: 이란 전쟁 배경의 종교·윤리 해설로 시장·정책·산업 직접성이 이번 WSJ rare earths/China AI 후보보다 낮아 state-only 처리.
+  - Barron's `SpaceX Just Showed Off Its IPO Secret Weapon`: Chrome DevTools 수집 성공했으나 본문이 1문단 뒤 Barron's subscription stub로 끊겨 풍부한 Axios 기사화에 부적합해 state-only 처리.
+  - Barron's `Sen. Thom Tillis Clears Kevin Warsh's Path to Fed Chair`: 23:06 KST Bloomberg Warsh 인준 기사와 사실상 같은 연준 인준 후속이라 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/supreme-court-weighs-bayer-appeal-of-failure-to-warn-roundup-lawsuits
+  - wsj: https://www.wsj.com/business/malaysia-rare-earth-minerals-baceacb2
+  - barrons: https://www.barrons.com/articles/tillis-clears-kevin-warsh-fed-chair-e45ceb37
+  - last_run_kst: 2026-04-27T01:09:00+09:00
+- artifacts:
+  - tmp/automation_fetch_bayer_20260427_0106.json
+  - tmp/automation_fetch_wsj_20260427_0105.json
+  - tmp/automation_fetch_wsj_selective_20260427_0108.json
+  - tmp/automation_news_manifest_20260427_0105.json
+  - tmp/automation_news_manifest_20260427_0109.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 1, WSJ 2, Barron's 1
+  - Chrome DevTools fetch-batch ok 4/4, automation lag guard within budget, preflight_degraded=false, batch_browser_reused=true
+  - first validate-manifest/apply-manifest/validate-dir ok for 2 files
+  - second news_update_queue surfaced fresh candidates: WSJ 3, Barron's 1
+  - Chrome DevTools selective fetch-batch ok 2/2 for WSJ rare earths and China AI
+  - second validate-manifest/apply-manifest/validate-dir ok for 2 files
+  - final news_update_queue all-zero
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 7분
+
+## 2026-04-27T00:09:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 발행 + 후속 state-only 정리.
+- result: Bloomberg 4건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-27 00-09 💳 Raizen은 채권단에 현금을 더 얹었지만 통제권은 내주지 않았습니다.md
+  - 26-04-27 00-09 🇬🇧 영국은 시티 규제개편 법안을 국왕연설에 올립니다.md
+  - 26-04-27 00-09 📱 Ternus의 첫 Apple 승부수는 접히는 iPhone입니다.md
+  - 26-04-27 00-09 📈 주식 헤지는 이제 금리 상승 베팅으로 이동하고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Gunman at DC Gala Sought to Assassinate Trump, Leavitt Says`: 확보 본문 420자로 짧고 4월 26일 백악관 만찬 총격 이벤트의 상세 후속이라 state-only 처리.
+  - WSJ `Sen. Thom Tillis said he would support Kevin Warsh’s confirmation...`: 23:06 KST Bloomberg Warsh 발행 건과 사실상 같은 연준 인준 후속이라 state-only 처리.
+  - WSJ Opinion video 3건: 영상/오피니언형 정치 콘텐츠로 시장·정책·산업 직접성이 약해 state-only 처리.
+  - WSJ `Cellphone-Location Tracking Poses Privacy Test at Supreme Court`: 반영 직후 새로 뜬 법·프라이버시 후보였으나 금융·시장 직접성이 낮아 두 번째 allow-empty manifest로 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/gunman-at-dc-gala-sought-to-assassinate-trump-leavitt-says
+  - wsj: https://www.wsj.com/us-news/law/police-geofence-warrants-phone-location-17d7cbe4
+  - barrons: https://www.barrons.com/articles/pop-quiz-when-was-the-centurys-worst-year-to-retire-cfd21459
+  - last_run_kst: 2026-04-27T00:09:00+09:00
+- artifacts:
+  - /tmp/automation_fetch_20260427_0003.json
+  - tmp/automation_news_manifest_20260427_0010.json
+  - tmp/automation_news_stateonly_20260427_0013.json
+  - tmp/automation_news_statefix_20260427_0009.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 5, WSJ 4, Barron's 0
+  - Chrome DevTools fetch-batch ok 5/5, automation lag guard within budget, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-dir ok for 4 new files
+  - second pass state-only validate/apply ok for fresh WSJ privacy candidate
+  - state timestamp corrected to actual current KST after initial future-time manifest
+  - final news_update_queue all-zero
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 7분
+
+
+## 2026-04-26T23:07:56+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: Bloomberg 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-26 23-06 🏛 Warsh 인준은 연준 독립성 논쟁 끝에 속도를 냅니다.md
+- reviewed_but_skipped:
+  - WSJ `From the Telegraph to the Smartphone`: 본문은 장문이지만 미국 250주년 정보기술 역사 특집으로 현재 시장·정책·산업 뉴스성이 약해 state-only 처리.
+  - WSJ `Apple’s New Boss`: 뉴스레터형 기술 라운드업이며 4월 21일 Apple/Ternus 승계 기사와 중복도가 높아 state-only 처리.
+  - Barron's `Pop Quiz: When Was the Century’s Worst Year to Retire?`: 확보 본문 418자의 티저/뉴스레터 스텁이라 풍부한 Axios 기사화에 부적합해 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/tillis-says-he-s-prepared-to-move-ahead-with-warsh-confirmation
+  - wsj: https://www.wsj.com/tech/personal-tech/information-technology-us-4f3c71f3
+  - barrons: https://www.barrons.com/articles/pop-quiz-when-was-the-centurys-worst-year-to-retire-cfd21459
+  - last_run_kst: 2026-04-26T23:06:00+09:00
+- artifacts:
+  - /tmp/automation_fetch_20260426_2305.json
+  - /tmp/automation_news_manifest_20260426_2309.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 1, WSJ 2, Barron's 1
+  - Chrome DevTools fetch-batch ok 4/4, automation lag guard passed, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for new article
+  - final news_update_queue all-zero
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 약 4분
+
+## 2026-04-26T22:28:23+09:00
+
+- action: Axios식 NewsUpdate 재시도 및 selective batch 발행.
+- result: Bloomberg 봇 탐지 우려로 중간 중단 후 대기/프로세스 정리, 재시도에서 Chrome DevTools fetch-batch 정상화. Bloomberg 5건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 5건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-26 22-27 💻 빅테크의 16조달러 실적주간이 증시 랠리를 시험합니다.md
+  - 26-04-26 22-27 🛡 호주는 장갑차 주문으로 평시 최대 방위비 확대에 속도를 냅니다.md
+  - 26-04-26 22-27 💳 머스크의 X는 은행 기능으로 슈퍼앱 승부를 겁니다.md
+  - 26-04-26 22-27 🏦 독일은 Commerzbank 방어를 위해 백기사 후보를 타진했습니다.md
+  - 26-04-26 22-27 ⛽ 호주는 일본 중국 한국과 에너지 안보 협의를 시작합니다.md
+- reviewed_but_skipped:
+  - Bloomberg Hormuz tracker: 단건 재시도 성공했지만 본문 868자로 짧고 기존 중동/호르무즈 후속과 중복도가 높아 state-only 처리.
+  - Bloomberg DC Dinner attack follow-ups and WSJ shooter follow-up: 14:03 KST 백악관 만찬 총격 백필 발행 건의 상세 후속이라 중복 state-only 처리.
+  - Bloomberg Hungary/EU funds, Adidas marathon, Yale/higher-ed, Hakeem Jeffries, EM podcast, British king/US visit: 이번 배치의 Big Tech/fintech/defense/energy/bank M&A 후보보다 금융·산업 직접성이 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/big-tech-s-16-trillion-earnings-week-is-make-or-break-for-rally
+  - wsj: https://www.wsj.com/us-news/a-shooter-throws-trumps-night-with-the-press-into-chaos-9db9b9f7
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+  - last_run_kst: 2026-04-26T22:27:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_2204.json (0-byte aborted pre-retry attempt)
+  - tmp/automation_fetch_hormuz_20260426_222246.json
+  - tmp/automation_fetch_selective_20260426_222313.json
+  - tmp/automation_news_manifest_20260426_2227.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 17, WSJ 2, Barron's 0 after restart
+  - Chrome DevTools Hormuz single fetch ok 1/1, preflight_degraded=false, batch_browser_reused=true
+  - Chrome DevTools selective fetch-batch ok 5/5, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-dir --glob '26-04-26 22-27 *.md' ok for five new articles
+  - final news_update_queue all-zero
+  - no residual news_update_harness/safari_fetch/chrome profile processes after completion
+- runtime: 중단/대기 포함 약 25분, 재시도 active 약 6분
+
+## 2026-04-26T20:04:00+09:00
+
+- action: Axios식 NewsUpdate state-only 정리.
+- result: 신규 기사 발행 없음. Bloomberg 신규 후보 1건은 본문 수집에는 성공했지만 원문이 2문단뿐이라 `원문 내용을 풍부하게` 조건을 충족하기 어렵다고 보고 state만 전진.
+- reviewed_but_skipped:
+  - Bloomberg `China Formalizes Labor Rules for Gig Workers on Online Platforms`: 중국 플랫폼 노동자 규칙 정식화라는 정책/플랫폼경제 후보였으나 확보 본문이 delivery riders/livestreamers, standardized contracts, fair pay, labor protections, 2027년 표준화 목표 정도의 짧은 2문단에 그쳐 풍부한 Axios 기사화에는 부적합.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/china-formalizes-labor-rules-for-gig-workers-on-online-platforms
+  - wsj: https://www.wsj.com/lifestyle/san-francisco-sea-lion-pier-39-chonkers-145628c0
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+  - last_run_kst: 2026-04-26T20:03:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_2003.json
+  - tmp/automation_news_stateonly_20260426_2003.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 1, WSJ 0, Barron's 0
+  - Chrome DevTools fetch-batch ok 1/1, automation lag guard within budget, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest --allow-empty ok
+  - apply-manifest --allow-empty ok
+  - final news_update_queue all-zero
+- runtime: 약 3분 30초
+
+## 2026-04-26T19:06:02+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: Bloomberg 2건, WSJ 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, WSJ 1건, Barron's 0건.
+- published_files:
+  - 26-04-26 19-04 🤝 러시아와 북한의 군사 협력은 정상급 채널로 다시 올라섰습니다.md
+  - 26-04-26 19-04 🛰 Hensoldt는 중국 수출통제에도 핵심 부품 리스크가 작다고 말했습니다.md
+  - 26-04-26 19-04 🧮 월가는 AI 시대 소프트웨어 기업을 승자와 패자로 다시 나누고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg Israel/Somaliland ambassador: 지정학성은 있으나 금융·정책·산업 직접성이 낮아 Bloomberg head 아래 state-only 처리.
+  - WSJ San Francisco sea lion feature: 생활/문화성 후보로 시장 연결성이 약해 WSJ head 아래 state-only 처리.
+  - WSJ superrich art vs Gulfstreams feature: 자산소비 트렌드는 있으나 이번 배치의 AI software credit 기사보다 시장 직접성이 낮아 state-only 처리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 3건, WSJ 3건, Barron's 0건이었습니다.
+  - 러시아 국방장관 방북은 북러 군사협력과 동북아 안보 리스크 연결성이 있어 발행했습니다.
+  - Hensoldt 기사는 중국의 유럽 방산기업 블랙리스트 첫 사용과 대만 관련 공급망 리스크가 있어 짧은 원문이지만 발행했습니다.
+  - WSJ 소프트웨어 대출 기사는 AI 공포가 사모신용/레버리지론 가격에 업종별로 다르게 반영되는 정량 분석이 충분해 풍부하게 발행했습니다.
+  - Chrome DevTools fetch-batch 3/3 성공, automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true였습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/israeli-cabinet-approves-appointment-of-ambassador-to-somaliland
+  - wsj: https://www.wsj.com/lifestyle/san-francisco-sea-lion-pier-39-chonkers-145628c0
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+  - last_run_kst: 2026-04-26T19:04:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_1902.json
+  - tmp/automation_news_manifest_20260426_1906.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 3, WSJ 3, Barron's 0
+  - Chrome DevTools fetch-batch ok 3/3
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for three new articles
+  - final news_update_queue all-zero
+- runtime: 약 4분
+
+## 2026-04-26T16:06:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: Bloomberg 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 0건, Barron's 0건.
+- published_files:
+  - 26-04-26 16-03 🕊 미-이란 협상 교착은 호르무즈 봉쇄를 장기화합니다.md
+- reviewed_but_skipped:
+  - Bloomberg Labour/Wales 선거 feature: 영국 지역정치 이벤트로 시장·정책·산업 직접성이 약해 Bloomberg head 아래 state-only 처리.
+  - WSJ WHCD shooter follow-up: 14:03 KST 백악관 만찬 총격 백필 기사와 같은 이벤트라 중복으로 state-only 처리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 2건, WSJ 1건, Barron's 0건이었습니다.
+  - 미-이란 협상 교착 기사는 휴전 유지 속 호르무즈 양방향 봉쇄, 37척 선박 회항, 일일 통항 거의 0, 원유 105.33달러, LNG 공급 차질까지 포함해 중동 에너지·해운 리스크 핵심 후속으로 발행했습니다.
+  - Chrome DevTools fetch-batch 단건 성공, automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true였습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/us-iran-peace-talks-stall-as-conflict-approaches-two-month-mark
+  - wsj: https://www.wsj.com/us-news/a-shooter-throws-trumps-night-with-the-press-into-chaos-9db9b9f7
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+  - last_run_kst: 2026-04-26T16:03:00+09:00
+- artifacts:
+  - tmp/automation_news_manifest_20260426_1603.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 2, WSJ 1, Barron's 0
+  - Chrome DevTools fetch-batch ok 1/1
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for new article
+  - final news_update_queue all-zero
+- runtime: 약 5분
+
+
+## 2026-04-26T14:03:38+09:00
+
+- action: Axios식 NewsUpdate no-op 점검.
+- result: 신규 기사 발행 없음. Bloomberg/WSJ/Barron's 모두 queue-zero.
+- state_at_check:
+  - last_run_kst: 2026-04-26T13:54:00+09:00
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/armed-man-stormed-white-house-correspondents-dinner-checkpoint
+  - wsj: https://www.wsj.com/us-news/trump-evacuated-white-house-correspondents-dinner-00f54d75
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue --format md/json all-zero with boundary_found=true for all three sources
+  - raw RSS spot check confirmed Bloomberg and Dow Jones latest source heads match current state boundaries
+  - no manifest created, no article/error file written, and NewsUpdate/.state.json was not advanced
+- runtime: 약 2분
 
 - run_at_kst: 2026-04-21T12:10:29+09:00
 - action: Axios식 NewsUpdate 배치 5건 발행
@@ -258,6 +1579,88 @@
   - bloomberg: https://www.bloomberg.com/news/articles/2026-04-23/blackstone-s-secondaries-unit-hits-100-billion-as-demand-grows
   - wsj: https://www.wsj.com/tech/ai/extraterrestrial-alien-life-research-changes-03278e0f
   - barrons: https://www.barrons.com/articles/nextera-energy-hits-record-high-electricity-sweet-spot-7cd95a17
+
+## 2026-04-25T17:04:08+09:00
+
+- action: Axios식 NewsUpdate queue review + state-only finish.
+- result: 신규 기사 발행 없음, 오류 보고서 없음, 최종 queue-zero finish.
+- reviewed_but_skipped:
+  - Bloomberg `Russian Attack on Ukrainian Cities Kills Four People, Zelenskiy Says`는 지정학 속보지만 이번 Axios 발행 기준의 시장·정책·산업 직접성이 낮고 신규 후보가 단 1건뿐이라 기사화하지 않음.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/russian-attack-on-ukrainian-cities-kills-four-people-zelenskiy-says
+  - wsj: https://www.wsj.com/world/europe/ukraine-is-europes-war-now-77f8e3ce
+  - barrons: https://www.barrons.com/articles/seniors-tax-break-irs-4d0f803e
+  - last_run_kst: 2026-04-25T17:04:00+09:00
+- verification: world_memory_cli list --days 21 ok, validate-dir --limit 35 ok, tests.test_news_update_harness ok, state-only validate/apply ok, final news_update_queue all-zero.
+- runtime: 약 2분
+
+## 2026-04-26T06:05:02+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: 총 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 0건, Barron's 0건
+- published_files:
+  - 26-04-26 06-03 G7 중앙은행 금리 동결 주간.md
+- decision_notes:
+  - 초기 큐는 Bloomberg 1건뿐이었고 WSJ/Barron's는 신규 후보가 없었습니다.
+  - Bloomberg `Fed Set to Lead Uneasy G-7 With Rates Kept on Hold This Week`는 금리 인하 지연, 에너지 물가, 중동/호르무즈 리스크가 결합된 주간 중앙은행 캘린더라 기사화했습니다.
+  - Chrome DevTools fetch-batch는 1/1 성공했고 preflight_degraded=false, batch_browser_reused=true였습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/fed-set-to-lead-uneasy-g-7-with-rates-kept-on-hold-this-week
+  - wsj: https://www.wsj.com/world/middle-east/aborted-pakistan-trip-leaves-trump-with-tough-choices-on-iran-talks-e062f8fd
+  - barrons: https://www.barrons.com/articles/us-home-prices-gains-decreases-943f4e4c
+  - last_run_kst: 2026-04-26T06:03:10+09:00
+- artifacts:
+  - tmp/automation_news_manifest_20260426_0603.json
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - fetch-batch ok
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for new article
+  - final news_update_queue all-zero
+  - validate-dir 전체는 과거 4월 16~17일 산출물 footer 이슈 때문에 ok=false였지만 신규 1건은 issues=[] 확인.
+- runtime: 약 5분
+
+## 2026-04-26T05:29:56+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행.
+- result: 총 4건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, WSJ 1건, Barron's 1건
+- published_files:
+  - 26-04-26 05-28 상장 사모신용 펀드 할인 매수.md
+  - 26-04-26 05-28 트럼프 밈코인 행사와 암호화폐 침체.md
+  - 26-04-26 05-28 미국 주택가격 도시별 격차.md
+  - 26-04-26 05-29 헝가리 오르반 연계 자산 경고.md
+- reviewed_but_skipped:
+  - WSJ 이란 협상/파키스탄 출장 취소 기사는 02:36 KST Bloomberg `트럼프 이란 협상 출장 취소`와 동일 이벤트라 중복 기사화하지 않고 state head로만 반영.
+  - WSJ House Ethics Committee scandal 기사는 시장·정책·산업 직접성이 약해 제외.
+- decision_notes:
+  - 초기 큐는 Bloomberg 1건, WSJ 3건, Barron's 1건이었고, 1차 apply 뒤 Bloomberg 신규 1건이 다시 열려 2차 selective batch를 진행했습니다.
+  - Chrome DevTools fetch-batch는 1차 5/5 성공, 2차 1/1 성공했고 automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true였습니다.
+  - 사모신용 BDC 할인 매수는 private credit 유동성/소프트웨어 대출 리스크와 직접 연결돼 발행했습니다.
+  - 트럼프 밈코인은 암호화폐 시장 침체, 대통령 관련 수익구조, 정치 윤리 리스크를 함께 담아 발행했습니다.
+  - 미국 주택가격은 경제통계 선호 레이어에 따라 Case-Shiller/Realtor.com 지역 격차 기사로 발행했습니다.
+  - 헝가리 Magyar 경고는 정권교체 뒤 Orban 연계 자산 회수·거래 리스크로 투자자 경고성이 있어 추가 발행했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/hungary-s-next-premier-warns-investors-to-shun-orban-tied-assets
+  - wsj: https://www.wsj.com/world/middle-east/aborted-pakistan-trip-leaves-trump-with-tough-choices-on-iran-talks-e062f8fd
+  - barrons: https://www.barrons.com/articles/us-home-prices-gains-decreases-943f4e4c
+  - last_run_kst: 2026-04-26T05:29:06+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_0525.json
+  - tmp/automation_news_manifest_20260426_0528.json
+  - tmp/automation_fetch_20260426_0530_second.json
+  - tmp/automation_news_manifest_20260426_0529_second.json
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir --glob '26-04-26 05-2*.md' ok for 4 new articles
+  - final news_update_queue all-zero
+- runtime: 약 7분
   - last_run_kst: 2026-04-24T04:22:32+09:00
 - remaining_queue:
   - apply 직후에도 Bloomberg 23건, WSJ 9건, Barron's 5건이 다시 열렸지만 이는 2차 반영 시점 이후에 새로 올라온 헤드라인으로 판단해 이번 런에서는 추가 추격하지 않았습니다.
@@ -1313,3 +2716,660 @@
 - verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok x3 with automation lag guard within budget and batch_browser_reused=true, validate-manifest/apply-manifest ok x3, validate-dir --limit 35 ok, final news_update_queue all-zero.
 - runtime: 약 13분
 
+## 2026-04-25T06:06:18+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: 총 3건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 1건, Barron's 1건
+- published_articles:
+  - 26-04-25 06-06 🏦 Powell 조사 종료는 Warsh Fed의 문을 열었습니다.md
+  - 26-04-25 06-06 💾 Intel 랠리는 전쟁 장세에서도 기술주를 새 기록으로 밀어 올렸습니다.md
+  - 26-04-25 06-06 🧾 행동주의 투자자들은 소형주 지분 변화를 통해 압박 지점을 드러냈습니다.md
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-24/looking-at-what-s-next-for-the-fed-with-the-powell-probe-dropped
+  - wsj: https://www.wsj.com/finance/stocks/intel-surge-propels-s-p-500-nasdaq-to-new-records-2447af94
+  - barrons: https://www.barrons.com/articles/repay-holdings-and-3-more-stocks-see-action-from-activist-investors-6f638075
+  - last_run_kst: 2026-04-25T06:06:00+09:00
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok with automation lag guard within budget and batch_browser_reused=true, validate-manifest/apply-manifest ok, validate-dir ok for 3 new files, final news_update_queue all-zero.
+- runtime: 약 4분
+
+## 2026-04-25T09:08:36+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행 + 중복 파일 즉시 정리.
+- result: 총 2건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 0건, WSJ 1건, Barron's 1건
+- published_articles:
+  - 26-04-25 09-08 🇲🇽 미국의 카르텔 대응은 멕시코와의 안보 동맹을 더 거칠게 시험합니다.md
+  - 26-04-25 09-08 💾 인텔의 24퍼센트 급등은 AI 랠리의 주인공보다 투자심리를 보여줍니다.md
+- reviewed_but_skipped:
+  - Barron's Steve Jobs and Tim Cook by the Numbers는 본문 확보 후 검토했지만 2026-04-22의 Tim Cook/Apple 승계·숫자 비교 기사들과 중복도가 높아 방금 생성된 중복 원고를 삭제하고, Barron's 최신 head 기준 state만 유지했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-24/trump-s-10-billion-irs-leak-suit-called-into-question-by-judge
+  - wsj: https://www.wsj.com/opinion/america-gets-serious-about-cartels-will-mexico-ddcedd88
+  - barrons: https://www.barrons.com/articles/stocks-today-intel-record-earnings-calendar-79b5fb0e
+  - last_run_kst: 2026-04-25T09:08:36+09:00
+- artifacts:
+  - tmp/automation_fetch_20260425_0904.json
+  - /tmp/automation_news_manifest_20260425_0912.json
+  - /tmp/automation_news_statefix_20260425_0908.json
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok with automation lag guard within budget and batch_browser_reused=true, validate-manifest/apply-manifest ok, state-only timestamp fix ok, validate-files ok for 2 final articles, final news_update_queue all-zero.
+- runtime: 약 8분
+
+## 2026-04-25T11:07:31+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: WSJ 신규 후보 2건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: WSJ 2건, Bloomberg 0건, Barron's 0건
+- published_articles:
+  - 26-04-25 11-06 미국 에너지 수출은 닫힌 페르시아만 위에서 사상 최고를 찍었습니다.md
+  - 26-04-25 11-06 트럼프 백악관은 공화당 주정부의 AI 규제법을 눌러 세우고 있습니다.md
+- decision_notes:
+  - Bloomberg와 Barron's는 state 경계 기준 신규 후보가 없었습니다.
+  - WSJ의 에너지 수출/페르시아만 기사와 AI 주정부 규제 기사는 각각 중동 에너지 리스크와 테크/AI 정책 가중치에 맞아 채택했습니다.
+  - Chrome DevTools fetch-batch로 본문 2건 모두 확보했고 automation lag guard는 scheduled_at_missing으로 비활성 상태였습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-25/singapore-business-hub-development-to-fuel-growth-through-2030-report-says
+  - wsj: https://www.wsj.com/business/energy-oil/us-energy-exports-persian-gulf-closure-588c257e
+  - barrons: https://www.barrons.com/articles/stocks-today-intel-record-earnings-calendar-79b5fb0e
+  - last_run_kst: 2026-04-25T11:06:00+09:00
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok with batch_browser_reused=true, validate-manifest ok, apply-manifest ok, validate-dir ok for 2 new articles, final news_update_queue all-zero.
+- runtime: 약 5분
+
+## 2026-04-26T03:04:09+09:00
+
+- action: Axios식 NewsUpdate no-op 점검.
+- result: 신규 기사 발행 없음. Bloomberg/WSJ/Barron's 모두 queue-zero.
+- precheck:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+- state_at_check:
+  - last_run_kst: 2026-04-26T02:36:00+09:00
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/insider-trading-cases-threaten-reckoning-for-prediction-markets
+  - wsj: https://www.wsj.com/business/the-race-to-make-the-worlds-most-in-demand-machine-092e8cea
+  - barrons: https://www.barrons.com/articles/fed-kevin-warsh-senate-committee-vote-jerome-powell-d22f2c8d
+- verification:
+  - news_update_queue rerun showed 신규 후보 수 0 for all three sources.
+  - Bloomberg RSS raw list contained the state boundary URL with nothing newer above it.
+  - Dow Jones RSS raw list contained the WSJ and Barron's state boundary URLs at the top for each source.
+  - Recent 02:36 KST four published files passed validate-files.
+- decision_notes:
+  - No manifest was created and NewsUpdate/.state.json was not advanced because there were no new candidates after the 02:36 KST run.
+  - A parallel raw RSS check briefly caused Dow Jones to skip on the session lock while Bloomberg held it; rerunning Dow Jones sequentially succeeded, so this was not a stale-lock or active-session blocker.
+- runtime: 약 2분
+
+## 2026-04-25T12:05:50+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: Bloomberg 1건, WSJ 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 1건, Barron's 0건
+- published_articles:
+  - 26-04-25 12-04 OpenAI 재판은 사기 공방보다 비영리 지배구조 싸움으로 좁혀졌습니다.md
+  - 26-04-25 12-04 이란 지도부 균열은 트럼프의 협상 승리를 더 어렵게 만듭니다.md
+- reviewed_but_skipped:
+  - Bloomberg Trump bond disclosure는 본문이 약 684자로 너무 짧아 풍부한 Axios 기사화에는 부적합하다고 보고 state head로만 반영.
+  - Bloomberg Malaysia anti-graft chief와 WSJ Obama redistricting은 시장·정책·산업 직접성이 낮아 기사화하지 않음.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/trump-reports-flurry-of-march-bond-purchases-in-new-disclosure
+  - wsj: https://www.wsj.com/world/middle-east/irans-leadership-divisions-frustrate-efforts-to-make-progress-in-talks-f87fac3a
+  - barrons: https://www.barrons.com/articles/stocks-today-intel-record-earnings-calendar-79b5fb0e
+  - last_run_kst: 2026-04-25T12:04:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260425_1203.json
+  - tmp/automation_news_manifest_20260425_1204.json
+- verification: counsel_memory_cli prepare-turn ok, world_memory_cli list --days 21 ok, Chrome DevTools fetch-batch ok with batch_browser_reused=true, validate-manifest/apply-manifest ok, validate-files ok for 2 new articles, final news_update_queue all-zero.
+- runtime: 약 4분 50초
+
+## 2026-04-25T16:42:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행
+- result: 총 3건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, Barron's 1건, WSJ 0건
+- published_articles:
+  - 26-04-25 16-35 🇩🇪 Merz의 성장의 해는 에너지 충격 앞에서 흔들리고 있습니다.md
+  - 26-04-25 16-35 🕊 이란 Araghchi의 파키스탄 방문은 미-이란 대화 교착을 보여줍니다.md
+  - 26-04-25 16-42 💵 미국 65세 이상 납세자는 6000달러 세금공제를 놓치기 쉽습니다.md
+- reviewed_but_skipped:
+  - Bloomberg SUV/station-wagon opinion은 시장·정책·산업 직접성이 약해 state head로만 정리.
+  - Bloomberg Merz 독일어판은 영어판과 중복이라 제외.
+  - Bloomberg Starmer 국내정치 전망은 시장 직접성이 약해 제외.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/opinion/articles/2026-04-25/your-suv-habit-is-killing-off-the-station-wagon-china-wants-to-save-it
+  - wsj: https://www.wsj.com/world/europe/ukraine-is-europes-war-now-77f8e3ce
+  - barrons: https://www.barrons.com/articles/seniors-tax-break-irs-4d0f803e
+  - last_run_kst: 2026-04-25T16:42:00+09:00
+- verification: world_memory_cli list ok, news_update_queue preflight/final ok, fetch-batch ok x2 with batch_browser_reused=true, validate-manifest/apply-manifest ok x2, validate-files ok for 3 articles.
+- runtime: 약 14분
+## 2026-04-25T18:08:00+09:00
+
+- action: Axios식 NewsUpdate 배치 3건 발행
+- selected_sources: Bloomberg 2건, WSJ 0건, Barron's 1건
+- published_files:
+  - 26-04-25 18-05 🏘 런던 주택난은 노동당의 선거 약점을 정면으로 드러냈습니다.md
+  - 26-04-25 18-05 🚗 Nissan은 중국 속도로 회생 전략을 다시 짜고 있습니다.md
+  - 26-04-25 18-05 🤖 신흥시장의 AI 채택은 미국 밖 수혜주 지도를 다시 그리고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg AI viral chart/Odd Lots 글은 본문이 팟캐스트 안내 수준이라 기사화하지 않고 state head로만 반영
+  - Bloomberg Odd Lots podcast 후보는 중복성으로 제외
+- fetch_verification:
+  - Chrome DevTools fetch-batch ok, requested=4, succeeded=4, failed=0, preflight_degraded=false, batch_browser_reused=true
+  - automation lag guard passed: scheduled 18:00 KST, attempted 18:02 KST, lag 약 2분
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/understanding-the-most-viral-chart-in-artificial-intelligence
+  - wsj: https://www.wsj.com/world/europe/ukraine-is-europes-war-now-77f8e3ce
+  - barrons: https://www.barrons.com/articles/china-gulf-emerging-ai-754b46e1
+  - last_run_kst: 2026-04-25T18:05:00+09:00
+- verification:
+  - validate-manifest ok
+  - apply-manifest ok
+  - 이번 신규 파일 3건은 validate-dir output에서 issues=[] 확인
+  - validate-dir 전체는 과거 산출물 footer 이슈 때문에 ok=false
+  - news_update_queue rerun ok: Bloomberg/WSJ/Barron's 모두 0건
+- runtime: 약 7분
+
+## 2026-04-25T20:10:40+09:00
+
+- action: Axios식 NewsUpdate 배치 2건 발행
+- selected_sources: Bloomberg 2건, WSJ 0건, Barron's 0건
+- published_files:
+  - 26-04-25 20-10 🧭 남미의 보통 경기침체는 신흥국 위기가 달라졌다는 신호입니다.md
+  - 26-04-25 20-10 🏦 UniCredit의 Generali 지분 확대는 이탈리아 금융 재편의 신호입니다.md
+- reviewed_but_skipped:
+  - Bloomberg 중국 폭우/May Day holiday 기사: 본문 1194자, 여행·재난 리스크는 있으나 기사화하기엔 얇아 제외
+  - Bloomberg 슬로베니아 총리 지명 지연 기사: 본문 1593자, 시장·정책 연결이 약해 제외
+  - Bloomberg 말레이시아 반부패 수장 시위 기사: 본문 2064자, 제도 이슈지만 투자/시장 연결이 제한적이라 제외
+- decision_notes:
+  - queue 기준 신규 후보는 Bloomberg 5건, WSJ 0건, Barron's 0건이었습니다.
+  - Bloomberg fetch-batch는 Chrome DevTools 경로에서 5/5 성공했고 automation lag guard 통과, batch browser reused true였습니다.
+  - 남미 normal recessions 글은 newsletter 형식이지만 6943자 본문과 EM 거시/중앙은행/환율 안정 논지가 충분해 발행했습니다.
+  - UniCredit-Generali 기사는 이탈리아 금융권 M&A 및 은행/보험 지분전으로 시장 관련성이 충분해 발행했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-25/rejoicing-over-normal-recessions-in-south-america-new-economy
+  - wsj: https://www.wsj.com/politics/tucker-carlson-trump-relationship-05781c57
+  - barrons: https://www.barrons.com/articles/china-gulf-emerging-ai-754b46e1
+  - last_run_kst: 2026-04-25T20:10:00+09:00
+- verification:
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for 2 new articles
+  - news_update_queue rerun ok (Bloomberg/WSJ/Barron's 모두 0건)
+- runtime: 약 8분 40초
+
+## 2026-04-25T21:09:43+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행
+- result: 총 3건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 3건, WSJ 0건, Barron's 0건
+- published_files:
+  - 26-04-25 21-05 프랑스 그리스 방산협정.md
+  - 26-04-25 21-05 항공유 급등과 트럼프 변수.md
+  - 26-04-25 21-07 인도 남북 정치균열.md
+- reviewed_but_skipped:
+  - WSJ `When Financial Cheating Leads to Divorce`, `We’re All Talking to Each Other Less Than We Did a Decade Ago`: 개인 재무/웰니스 성격으로 시장·정책·산업 직접성이 약해 state head만 전진.
+  - Bloomberg `The Michael Jackson Biopic Avoids the Man in the Mirror`, `The NFL Draft Should Never Be a Reason to Close Schools`: 문화/스포츠 행정 성격으로 기사화하지 않고 Bloomberg reviewed head로 정리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 2건, WSJ 2건, Barron's 0건이었고 Bloomberg 두 건은 Chrome DevTools fetch-batch에서 2/2 성공했습니다.
+  - 프랑스-그리스 방산협정은 유럽 재무장/전략자율성 테마와 직접 연결돼 발행했습니다.
+  - 항공유 급등 기사는 최근 항공 연료비 기사와 일부 겹쳤지만, 운임 전가·항공사 전망 하향·제휴/M&A·트럼프 정부개입까지 담겨 있어 별도 산업 재편 기사로 발행했습니다.
+  - apply 뒤 열린 Bloomberg 3건 중 인도 남북 정치균열만 국가 개발/정치경제 이슈로 추가 fetch 및 발행했습니다.
+  - 첫 manifest의 `last_run_kst`를 실제 시각보다 앞선 21:07로 잡은 뒤, 파일명을 21:05로 정정하고 `.state.json` 시간만 21:05로 수동 보정했습니다. 이후 2차 manifest apply로 최종 state는 21:07이 됐습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/opinion/articles/2026-04-25/michael-jackson-biopic-avoids-child-abuse-allegations-and-shrinks-legacy
+  - wsj: https://www.wsj.com/articles/when-financial-cheating-leads-to-divorce-f4220dfd
+  - barrons: https://www.barrons.com/articles/china-gulf-emerging-ai-754b46e1
+  - last_run_kst: 2026-04-25T21:07:00+09:00
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - Chrome DevTools fetch-batch ok x2, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-dir --limit 55 ok
+  - final news_update_queue all-zero
+- runtime: 약 8분 20초
+
+## 2026-04-26T00:14:15+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 실행
+- result: 총 7건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 7건, WSJ 0건, Barron's 0건
+- published_files:
+  - 26-04-26 00-15 🕊 미-이란 협상은 돌파구보다 기대 낮추기에 가까워졌습니다.md
+  - 26-04-26 00-15 🛰 스트라이더는 미중 경제안보 시대의 민간 정보기관으로 커지고 있습니다.md
+  - 26-04-26 00-15 🛢 야긴은 호르무즈 사태를 사상 최대 에너지 교란으로 봅니다.md
+  - 26-04-26 00-15 📈 트럼프 발언은 주식시장 V자 반등과 급락을 함께 만듭니다.md
+  - 26-04-26 00-15 ₿ 비트코인 8만달러 접근은 열광보다 쇼트커버와 스트래티지 매수의 산물입니다.md
+  - 26-04-26 00-22 💳 부실기업은 2028년 만기벽 전에 장외 채무 재조정으로 움직입니다.md
+  - 26-04-26 00-22 🇪🇺 마크롱은 EU 코로나 부채를 갚기보다 굴려야 한다고 말했습니다.md
+- reviewed_but_skipped:
+  - WSJ House Ethics Committee scandal: 정치/윤리위 스캔들 중심이라 시장·정책·산업 직접성이 약해 state head만 전진.
+  - Barron's 신규 후보 없음.
+- decision_notes:
+  - 초기 큐는 Bloomberg 5건, WSJ 0건, Barron's 0건이었고, 1차 apply 뒤 Bloomberg 2건과 WSJ 1건이 추가로 열려 2차 selective batch를 진행했습니다.
+  - Bloomberg 1차 fetch-batch는 Chrome DevTools에서 5/5 성공, 2차 fetch-batch는 2/2 성공했습니다. automation lag guard 통과, preflight_degraded=false, batch browser reused=true.
+  - 미-이란/호르무즈 2건은 본문은 짧지만 중동 에너지·해상 리스크 핵심축이라 발행했습니다.
+  - Strider, Trump market, Bitcoin, LME, Macron EU debt는 각각 미중 경제안보/시장 변동성/크립토 수급/사모신용 스트레스/EU 공동부채 테마로 발행했습니다.
+  - 트럼프 기사 파일명은 macOS 바이트 길이로 끝이 잘려 저장돼, 검증 후 짧고 완결된 파일명으로 Python NFD rename 처리했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/newsletters/2026-04-25/out-of-court-creditor-deals-are-set-to-hit-the-k-shaped-debt-market
+  - wsj: https://www.wsj.com/politics/deluge-of-scandals-raises-stakes-for-secretive-house-panel-dbe84879
+  - barrons: https://www.barrons.com/articles/china-gulf-emerging-ai-754b46e1
+  - last_run_kst: 2026-04-26T00:15:01+09:00
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - Chrome DevTools fetch-batch ok x2
+  - validate-manifest ok x2
+  - apply-manifest ok x2
+  - validate-files ok for 7 new articles after filename normalization
+  - final news_update_queue all-zero
+  - validate-dir 전체는 과거 산출물 footer 이슈 때문에 ok=false였지만 신규 7건은 issues=[] 확인.
+- runtime: 약 11분
+
+## 2026-04-26T02:38:26+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: 총 4건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, WSJ 1건, Barron's 1건
+- published_files:
+  - 26-04-26 02-36 중국 미얀마 국경무역.md
+  - 26-04-26 02-36 트럼프 이란 협상 출장 취소.md
+  - 26-04-26 02-36 ASML AI 장비 병목.md
+  - 26-04-26 02-36 Warsh Fed 인준 표결.md
+- reviewed_but_skipped:
+  - Bloomberg prediction markets insider-trading 기사는 본문 913자로 너무 짧아 풍부한 Axios 기사화에는 부적합하다고 보고 reviewed head로만 반영.
+  - WSJ missing scientists/conspiracy, soldier Maduro bets 후보는 ASML AI 장비 병목 기사보다 시장·산업 직접성이 낮아 state head 아래로 정리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 5건, WSJ 3건, Barron's 1건이었습니다.
+  - Chrome DevTools fetch-batch는 5/5 성공했고 automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true였습니다.
+  - 중국-미얀마는 국경무역·에너지·광물·온라인 사기 단속 축으로 발행했고, 트럼프 이란 협상 취소는 중동 에너지 리스크와 직접 연결돼 발행했습니다.
+  - ASML은 AI 인프라 CAPEX 병목, Warsh는 Fed 독립성·금리 변동성 이벤트로 발행했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/insider-trading-cases-threaten-reckoning-for-prediction-markets
+  - wsj: https://www.wsj.com/business/the-race-to-make-the-worlds-most-in-demand-machine-092e8cea
+  - barrons: https://www.barrons.com/articles/fed-kevin-warsh-senate-committee-vote-jerome-powell-d22f2c8d
+  - last_run_kst: 2026-04-26T02:36:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_0233.json
+  - tmp/automation_news_manifest_20260426_0236.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for 4 new articles
+  - final news_update_queue all-zero
+- runtime: 약 5분
+
+## 2026-04-26T04:04:08+09:00
+
+- action: Axios식 NewsUpdate no-op/state-only 정리
+- result: 신규 기사 발행 없음. Barron's 1건은 02:36 KST에 이미 발행한 Bloomberg `트럼프 이란 협상 출장 취소`와 동일 이벤트라 중복 기사화하지 않고 state만 전진.
+- state_only_manifest: tmp/automation_news_stateonly_20260426_0403.json
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/insider-trading-cases-threaten-reckoning-for-prediction-markets
+  - wsj: https://www.wsj.com/business/the-race-to-make-the-worlds-most-in-demand-machine-092e8cea
+  - barrons: https://www.barrons.com/articles/trump-us-envoy-iran-war-pakistan-93528a55
+  - last_run_kst: 2026-04-26T04:03:28+09:00
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 0, WSJ 0, Barron's 1 duplicate
+  - validate-manifest --allow-empty ok
+  - apply-manifest --allow-empty ok
+  - final news_update_queue all-zero
+- runtime: 약 2분
+
+## 2026-04-26T07:06:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 1회 실행.
+- result: 총 1건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 0건, Barron's 0건
+- published_files:
+  - 26-04-26 07-06 이란 연계 선박 차단.md
+- reviewed_but_skipped:
+  - Bloomberg 콜롬비아 폭탄 공격/대선 치안 기사는 본문 1514자이고 국가 리스크 성격은 있으나 금융·산업 직접성이 약해 state head로만 반영.
+- decision_notes:
+  - 초기 큐는 Bloomberg 2건뿐이었고 WSJ/Barron's는 신규 후보가 없었습니다.
+  - Chrome DevTools fetch-batch는 2/2 성공했고 automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true였습니다.
+  - 이란 연계 선박 Sevan 차단은 제재 대상 그림자 선단, 미 해군 헬리콥터 차단, 이란 항구 봉쇄, 37척 항로 변경, 파키스탄 특사 방문 취소까지 연결돼 중동 에너지·해상 리스크 기사로 발행했습니다.
+  - 처음 생성한 07-07 파일명/state 시간이 현재 실행 시각보다 앞서 있어, NFD rename 및 state-only manifest로 07-06 기준으로 보정했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/colombia-attacks-target-security-forces-civilians-ahead-of-vote
+  - wsj: https://www.wsj.com/world/middle-east/aborted-pakistan-trip-leaves-trump-with-tough-choices-on-iran-talks-e062f8fd
+  - barrons: https://www.barrons.com/articles/us-home-prices-gains-decreases-943f4e4c
+  - last_run_kst: 2026-04-26T07:06:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_0704.json
+  - tmp/automation_news_manifest_20260426_0707.json
+  - tmp/automation_news_statefix_20260426_0706.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-manifest --allow-empty ok for state correction
+  - apply-manifest --allow-empty ok for state correction
+  - validate-files ok for new article
+  - final news_update_queue all-zero
+- runtime: 약 3분
+
+## 2026-04-26T08:05:20+09:00
+
+- action: Axios식 NewsUpdate 배치 2건 발행
+- selected_sources: Bloomberg 2건, WSJ 0건, Barron's 0건
+- published_files:
+  - 26-04-26 08-03 트럼프 밈코인은 암호화폐 응원에도 깊은 하락을 멈추지 못했습니다.md
+  - 26-04-26 08-03 브라질 희토류 매각은 국가안보 논쟁에 걸렸습니다.md
+- decision_notes:
+  - 초기 큐는 Bloomberg 2건뿐이었고 WSJ/Barron's는 신규 후보가 없었습니다.
+  - Chrome DevTools fetch-batch는 2/2 성공했고 automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true였습니다.
+  - 트럼프 밈코인 기사는 행사/정책/가격 반응/이해상충 디테일이 충분해 발행했습니다.
+  - 브라질 희토류 기사는 본문은 짧지만 전략광물·미국 공급망·브라질 국가안보 심사 이슈라 발행했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/trump-s-crypto-pep-talk-can-t-stop-his-memecoin-s-deep-slide
+  - wsj: https://www.wsj.com/world/middle-east/aborted-pakistan-trip-leaves-trump-with-tough-choices-on-iran-talks-e062f8fd
+  - barrons: https://www.barrons.com/articles/us-home-prices-gains-decreases-943f4e4c
+  - last_run_kst: 2026-04-26T08:03:57+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_0801.json
+  - /tmp/automation_news_manifest_20260426_0805.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for 2 new articles
+  - final news_update_queue all-zero
+  - validate-dir found unrelated pre-existing footer issues in older files, but both new files passed validation.
+- runtime: 약 4분
+
+## 2026-04-26T09:03:20+09:00
+
+- action: Axios식 NewsUpdate 큐 점검 후 no-op 종료.
+- result: 신규 후보 0건, 기사 파일/오류 보고서/`.state.json` 변경 없음.
+- queue_status:
+  - bloomberg: boundary_found=true, new_count=0
+  - wsj: boundary_found=true, new_count=0
+  - barrons: boundary_found=true, new_count=0
+- final_state_reference:
+  - last_run_kst: 2026-04-26T08:03:57+09:00
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-25/trump-s-crypto-pep-talk-can-t-stop-his-memecoin-s-deep-slide
+  - wsj: https://www.wsj.com/world/middle-east/aborted-pakistan-trip-leaves-trump-with-tough-choices-on-iran-talks-e062f8fd
+  - barrons: https://www.barrons.com/articles/us-home-prices-gains-decreases-943f4e4c
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue --format md all-zero
+  - news_update_queue --format json all-zero after local validate-dir lock released
+  - validate-dir was run and reported unrelated pre-existing footer issues in older files; no new files were created in this run.
+- runtime: 약 1분
+
+## 2026-04-26T10:09:22+09:00
+
+- action: Axios식 NewsUpdate 배치 3건 발행.
+- result: 총 3건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 1건, WSJ 2건, Barron's 0건
+- published_files:
+  - 26-04-26 10-06 호르무즈 이중 봉쇄는 해운 위기를 역사적 단절로 만들었습니다.md
+  - 26-04-26 10-06 세계 에너지 위기는 수입국의 비상정책을 되살렸습니다.md
+  - 26-04-26 10-06 AI 데이터센터는 미국 지방정치의 새 격전지가 됐습니다.md
+- reviewed_but_skipped:
+  - WSJ White House Correspondents' Dinner evacuation: breaking political/security item이지만 금융·산업 직접성이 약해 별도 기사화하지 않고 WSJ head boundary 아래로 정리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 1건, WSJ 3건, Barron's 0건이었습니다.
+  - Bloomberg 호르무즈 기사와 WSJ 에너지 위기 기사는 Chrome DevTools 수집 본문이 얇아 chrome-visible 폴백으로 재수집했고, 각각 2669자/4090자 본문을 확보했습니다.
+  - 호르무즈 이중 봉쇄와 세계 에너지 위기는 중동 에너지·해운 리스크 핵심축으로 발행했습니다.
+  - Festus 데이터센터 반대 기사는 60억달러 AI 인프라 프로젝트가 지방선거·주민소환·전력요금 논쟁으로 번진 사례라 AI 인프라 병목 기사로 발행했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/iran-war-hormuz-double-blockade-halts-ship-traffic-dims-hope-for-the-economy
+  - wsj: https://www.wsj.com/finance/commodities-futures/see-how-the-energy-crisis-is-spreading-across-the-world-dc497d72
+  - barrons: https://www.barrons.com/articles/us-home-prices-gains-decreases-943f4e4c
+  - last_run_kst: 2026-04-26T10:06:44+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_1002.json
+  - tmp/automation_fetch_20260426_1002_visible.json
+  - tmp/automation_news_manifest_20260426_1008.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight ok
+  - Chrome DevTools fetch-batch ok 4/4, chrome-visible fallback ok 2/2
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for 3 new articles
+  - final news_update_queue all-zero
+- runtime: 약 7분
+
+## 2026-04-26T11:05:18+09:00
+
+- action: Axios식 NewsUpdate state-only 정리.
+- result: 신규 기사 발행 없음. Bloomberg/WSJ/Barron's 신규 후보 3건은 모두 White House Correspondents' Dinner 보안사고 동일 이벤트였고, 금융·산업·정책 직접성이 약해 기사화하지 않고 state만 전진.
+- candidate_review:
+  - Bloomberg: Trump Evacuated After Shots Fired at DC Event; Shooter Detained. Chrome DevTools 본문 수집 성공이나 짧은 breaking update 성격.
+  - WSJ: Shooter Detained at White House Correspondents’ Dinner. 동일 정치·보안 속보라 중복 및 시장 직접성 부족.
+  - Barron's: Security Alert 후보는 fetch 결과 500/stub 페이지로 확인됐고, 동일 이벤트라 오류 보고서 없이 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/alleged-shooter-at-white-house-press-event-in-custody
+  - wsj: https://www.wsj.com/us-news/trump-evacuated-white-house-correspondents-dinner-00f54d75
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+  - last_run_kst: 2026-04-26T11:04:39+09:00
+- artifacts:
+  - tmp/automation_news_stateonly_20260426_1104.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 1, WSJ 1, Barron's 1
+  - Chrome DevTools fetch-batch ok 3/3, automation lag guard within budget, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest --allow-empty ok
+  - apply-manifest --allow-empty ok
+  - final news_update_queue all-zero
+- runtime: 약 3분
+
+## 2026-04-26T15:06:48+09:00
+
+- action: Axios식 NewsUpdate 배치 3건 발행.
+- selected_sources: Bloomberg 2건, WSJ 1건, Barron's 0건.
+- published_files:
+  - 26-04-26 15-05 홍콩 IPO 시장은 올해 179억 달러를 끌어모았습니다.md
+  - 26-04-26 15-05 DeepSeek V4 지연은 중국산 칩 전환을 보여줍니다.md
+  - 26-04-26 15-05 AI 열풍은 다시 미국 증시를 끌어올리고 있습니다.md
+- decision_notes:
+  - Queue 신규 후보는 Bloomberg 홍콩 IPO, Bloomberg DeepSeek V4/중국 칩, WSJ AI 주식시장 랠리 3건이었고 모두 본문 수집 성공.
+  - 홍콩 IPO는 자본시장 통계/규제 맥락이 있어 발행, DeepSeek와 WSJ AI 기사는 테크/AI 필수 포함 후보로 발행.
+  - Chrome DevTools fetch-batch 성공, automation lag guard 통과, batch_browser_reused=true, 오류 보고서 없음.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/hk-finance-chief-says-city-s-2026-ipos-have-raised-17-9-billion
+  - wsj: https://www.wsj.com/finance/stocks/the-ai-frenzy-is-back-and-lifting-the-entire-stock-market-to-record-highs-5d5586ac
+  - barrons: https://www.barrons.com/articles/trump-white-house-correspondents-dinner-0c13cdec
+  - last_run_kst: 2026-04-26T15:05:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260426_1504.json
+  - tmp/automation_news_manifest_20260426_1505.json
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 2, WSJ 1, Barron's 0
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for 3 new files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+- runtime: 약 4분 15초
+
+## 2026-04-27T17:08:00+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행.
+- result: 총 4건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 2건, WSJ 1건, Barron's 1건.
+- published_files:
+  - 26-04-27 17-05 Emirates NBD는 전쟁 이후 중동 AT1 채권 문을 다시 두드립니다.md
+  - 26-04-27 17-05 유가는 이란 협상 정체에 다시 100달러 위로 뛰었습니다.md
+  - 26-04-27 17-05 트럼프의 이란 협상 취소는 유가 전쟁 프리미엄을 되살렸습니다.md
+  - 26-04-27 17-08 Tokyo Gas는 46년 만에 가정용 기본요금을 올립니다.md
+- reviewed_but_skipped:
+  - Bloomberg `Bank of England to Stress Test Longer Energy Shock...`: 14:11 KST에 이미 BOE 에너지 쇼크 기사 발행 완료라 중복 state-only 처리.
+  - Bloomberg `What's Actually Going On With Private Credit` 및 팟캐스트: 본문은 50분 Odd Lots 소개문 중심이라 독립 Axios 기사로는 얕아 state-only 처리.
+  - WSJ 금/아시아시장/유로존 채권 단신: 유가·호르무즈 테마가 WSJ/Barron's 원유 기사와 중복되고 단문성이 강해 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/private-credit-concerns-what-s-next-for-private-credit-odd-lots
+  - wsj: https://www.wsj.com/finance/commodities-futures/oil-rises-amid-ongoing-middle-east-tensions-532e6dea
+  - barrons: https://www.barrons.com/articles/oil-price-today-trump-iran-talks-18fb15be
+  - last_run_kst: 2026-04-27T17:08:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_1706_crosssource.json
+  - tmp/automation_fetch_20260427_1707_bloomberg_second.json
+  - tmp/automation_news_manifest_20260427_1705.json
+  - tmp/automation_news_manifest_20260427_1708_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - Chrome DevTools fetch-batch ok for 5/5 selected URLs, preflight_degraded=false, batch_browser_reused=true
+  - validate-manifest/apply-manifest ok for both manifests
+  - validate-dir --glob '26-04-27 17-*.md' ok for 4 files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 6분
+
+## 2026-04-27T03:07:14+09:00
+
+- action: Axios식 NewsUpdate 배치 2건 발행.
+- result: 총 2건 발행, 오류 보고서 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 0건(중복/얇은 본문 state-only), WSJ 2건, Barron's 0건.
+- published_files:
+  - 26-04-27 03-10 Trump 피격 시도는 미국 정치 리스크를 다시 전면에 세웠습니다.md
+  - 26-04-27 03-10 Prediction market은 금융상품인가 도박인가.md
+- reviewed_but_skipped:
+  - Bloomberg Trump ballroom/security need: 본문 743자로 얇고 WSJ Trump 피격/대피 칼럼과 동일 정치·안보 이벤트라 state만 전진.
+  - WSJ A People That Proudly Proclaims Am Yisrael Chai: 시장·정책·산업 직접성이 낮은 독자투고라 WSJ head boundary 아래로 정리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 1건, WSJ 3건, Barron's 0건이었습니다.
+  - Chrome DevTools fetch-batch로 4/4 본문 수집 성공, automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true.
+  - Trump 피격/대피 칼럼은 정치·안보 리스크 필수 포함 후보로 발행했습니다.
+  - Prediction market 칼럼은 Kalshi/Polymarket/CFTC/주정부 도박규제 충돌을 다룬 금융시장 구조·규제 테마로 발행했습니다.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-26/trump-says-gala-attack-shows-security-need-for-his-new-ballroom
+  - wsj: https://www.wsj.com/opinion/trump-stands-tall-under-fire-045bb330
+  - barrons: https://www.barrons.com/articles/tillis-clears-kevin-warsh-fed-chair-e45ceb37
+  - last_run_kst: 2026-04-27T03:10:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_0304.json
+  - tmp/automation_news_manifest_20260427_0310.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 1, WSJ 3, Barron's 0
+  - validate-manifest ok
+  - apply-manifest ok
+  - validate-files ok for 2 new files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+- runtime: 약 8분
+
+## 2026-04-27T06:07:08+09:00
+
+- action: Axios식 NewsUpdate 배치 1건 발행 + 얇은 Barron's 후보 state-only 정리.
+- result: Bloomberg 1건 발행, Barron's 1건은 본문 348자라 기사화하지 않고 state만 전진, 오류 보고서 없음, 최종 queue-zero finish.
+- published_files:
+  - 26-04-27 06-04 월가 양자컴퓨팅 레이스, 골드만은 물러서고 JPMorgan은 버틴다.md
+- reviewed_but_skipped:
+  - Barron's Stock Futures on Deck After Record-Setting Friday: Chrome DevTools fetch 성공했지만 본문이 348자 단문 프리뷰라 원문 내용을 풍부하게 담을 수 없어 state-only 처리.
+- decision_notes:
+  - 초기 큐는 Bloomberg 1건, WSJ 0건, Barron's 0건이었고 Bloomberg Goldman/JPMorgan quantum computing race는 금융+테크 필수 후보로 발행.
+  - 적용 후 큐 재확인에서 Barron's 1건이 새로 드러나 추가 확인했고, 얇은 본문으로 판단해 allow-empty manifest로 Barron's boundary만 닫음.
+  - Chrome DevTools fetch-batch는 두 번 모두 성공했고 automation lag guard 통과, preflight_degraded=false, batch_browser_reused=true.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/features/2026-04-26/wall-street-s-quantum-computing-divide-goldman-retreats-jpmorgan-invests
+  - wsj: https://www.wsj.com/us-news/caltech-grad-teacher-of-the-month-named-as-washington-shooting-suspect-310cf6fb
+  - barrons: https://www.barrons.com/articles/stock-futures-trading-sunday-676fbb19
+  - last_run_kst: 2026-04-27T06:06:10+09:00
+- artifacts:
+  - tmp/automation_fetch_20260427_0603.json
+  - tmp/automation_manifest_20260427_0604.json
+  - tmp/automation_fetch_20260427_0605_barrons.json
+  - tmp/automation_manifest_20260427_0606_state_only_barrons.json
+- verification:
+  - world_memory_cli list --days 21 ok
+  - news_update_queue preflight: Bloomberg 1, WSJ 0, Barron's 0
+  - validate-manifest ok for Bloomberg article
+  - apply-manifest ok
+  - validate-files ok for new Bloomberg file
+  - follow-up news_update_queue surfaced Barron's 1, then final news_update_queue all-zero after state-only close
+- runtime: 약 4분 15초
+
+## 2026-04-28T00:17:18+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + 중복 state-only 정리.
+- result: Bloomberg 7건, Barron's 3건 발행, WSJ 0건, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 7건, Barron's 3건.
+- published_files:
+  - 26-04-28 00-12 Plotkin은 개인 자산을 ETF로 옮겨 세금 이연을 노립니다.md
+  - 26-04-28 00-12 Apple과 Google은 캘리포니아 플랫폼 규제안을 꺾었습니다.md
+  - 26-04-28 00-12 Sequoia와 Nvidia는 DeepMind 출신의 AI 스타트업에 베팅했습니다.md
+  - 26-04-28 00-12 Ackman의 Pershing Square IPO는 50억달러 조달로 낮아졌습니다.md
+  - 26-04-28 00-12 노르웨이 피오르드는 AI 데이터센터 전력 경쟁의 새 무대가 됐습니다.md
+  - 26-04-28 00-12 BASF 코팅 인수금융은 화학업 침체 속 대출시장을 시험합니다.md
+  - 26-04-28 00-12 Micron과 Sandisk는 AI 메모리 수요로 추가 상승을 기대받고 있습니다.md
+  - 26-04-28 00-12 강달러는 은과 신흥시장 주식에 부담을 키우고 있습니다.md
+  - 26-04-28 00-17 American Airlines는 항공기 32대를 담보로 채권을 팝니다.md
+  - 26-04-28 00-17 이란 전쟁은 채권 투자 공식까지 바꾸고 있습니다.md
+- reviewed_but_skipped:
+  - Bloomberg NBA expansion: 스포츠 프랜차이즈 자본시장 기사지만 이번 배치의 AI/신용/달러/항공채 후보보다 우선순위가 낮아 state-only 처리.
+  - Bloomberg Truist municipal traders: 인력 이동 단신으로 기사화 우선순위가 낮아 state-only 처리.
+  - Bloomberg White House dinner shooting follow-up: 이미 WHCD 총격/경호 이슈를 앞선 배치에서 발행해 후속 회의 기사만 state-only 처리.
+  - Barron's Microsoft/OpenAI: 직전 Bloomberg OpenAI-Microsoft 기사와 핵심 중복이라 state boundary로만 사용.
+  - Barron's Joby air taxi demo: 직전 뉴욕 eVTOL 데모 기사와 중복되어 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/news/articles/2026-04-27/american-airlines-to-sell-1-14-billion-in-bonds-for-32-planes
+  - wsj: https://www.wsj.com/tech/ai/openai-and-microsoft-strike-truce-redrawing-once-tense-partnership-9ae22700
+  - barrons: https://www.barrons.com/articles/iran-war-bonds-interest-rate-response-caf3f034
+  - last_run_kst: 2026-04-28T00:17:00+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0003_all.json
+  - tmp/automation_fetch_20260428_0015_second.json
+  - tmp/automation_news_manifest_20260428_0012.json
+  - tmp/automation_news_manifest_20260428_0017_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 9, WSJ 0, Barron's 3
+  - Chrome DevTools fetch-batch ok for 12/12, then 3/3, preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for 8 + 2 article batches
+  - validate-files ok for all 10 newly written files
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 15분
+
+## 2026-04-28T06:09:37+09:00
+
+- action: Axios식 NewsUpdate selective batch 2회 발행 + 저우선 후보 state-only 정리.
+- result: Bloomberg 4건 발행, 오류 보고서 신규 없음, 최종 queue-zero finish.
+- selected_sources: Bloomberg 4건.
+- published_files:
+  - 26-04-28 06-06 Match는 Sniffies에 1억달러 인수 선택권을 걸었습니다.md
+  - 26-04-28 06-06 미국 관세 변화는 재정적자를 1조1000억달러 키울 수 있습니다.md
+  - 26-04-28 06-08 러시아의 Storm-1516은 가짜 영상으로 현실을 구부립니다.md
+  - 26-04-28 06-08 아시아는 호르무즈 연료 쇼크를 보조금과 외교로 버팁니다.md
+- reviewed_but_skipped:
+  - Bloomberg King Charles royal-treatment newsletter: 직전 실행들에서 유사한 US-UK/왕실 의전 뉴스레터가 반복됐고 시장 직접성이 낮아 state-only 처리.
+  - Bloomberg New York World Cup viewing sites: 지역 이벤트/소비 편의 성격으로 글로벌 금융·정책 직접성이 낮아 state-only 처리.
+  - Barron's mixed Monday market wrap: 종가 라운드업 성격이고 개별 발행 후보 대비 정보 밀도가 낮아 state-only 처리.
+- final_state:
+  - bloomberg: https://www.bloomberg.com/graphics/2026-russia-disinformation-storm-1516-videos/
+  - wsj: https://www.wsj.com/business/media/jimmy-kimmel-melania-trump-widow-comments-40f9478a
+  - barrons: https://www.barrons.com/articles/u-s-markets-finished-mixed-monday-as-sandisk-led-rambus-lagged-491da95d
+  - last_run_kst: 2026-04-28T06:08:51+09:00
+- artifacts:
+  - tmp/automation_fetch_20260428_0602_selected.json
+  - tmp/automation_news_manifest_20260428_0602.json
+  - tmp/automation_fetch_20260428_0608_second.json
+  - tmp/automation_news_manifest_20260428_0608_second.json
+- verification:
+  - counsel_memory_cli prepare-turn ok
+  - world_memory_cli list --days 21 ok
+  - initial news_update_queue: Bloomberg 4, WSJ 0, Barron's 1; post-apply second queue found Bloomberg 2 and published both
+  - Chrome DevTools fetch-batch ok for 2/2, then 2/2; preflight_degraded=false, batch_browser_reused=true, no bot block/paywall
+  - validate-manifest/apply-manifest ok for both batches
+  - validate-dir ok for '26-04-28 06-06*.md' and '26-04-28 06-08*.md'
+  - final news_update_queue all-zero with boundary_found=true for all three sources
+  - no residual news_update_harness/safari_fetch/chrome_visible_fetch/firefox_visible_fetch/remote-debug Chrome processes after completion
+- runtime: 약 8분

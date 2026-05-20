@@ -1,0 +1,13 @@
+{
+  "name": "financial-assistant-browsermcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Project-local BrowserMCP install used for NewsCollector browser automation experiments.",
+  "scripts": {
+    "server": "mcp-server-browsermcp",
+    "smoke": "python3 ../../scripts/browsermcp_smoke_test.py"
+  },
+  "dependencies": {
+    "@browsermcp/mcp": "0.1.3"
+  }
+}

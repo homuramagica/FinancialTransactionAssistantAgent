@@ -141,6 +141,84 @@ class WorldMemoryCliTests(unittest.TestCase):
         self.assertIsNotNone(treasury_story)
         self.assertEqual(treasury_story["story"], "재무부 공급·바이백 조합")
 
+    def test_ai_story_rules_split_model_software_from_physical_infra(self) -> None:
+        infra_story = wm._infer_story_metadata_by_rules(
+            {
+                "title": "AI 데이터센터 냉각과 HBM 공급망 투자 확대",
+                "summary": "GPU, 전력망, 냉각수, 유리기판과 광통신 부품까지 AI 설비투자 병목으로 재가격된다.",
+                "tags": ["ai", "data_centers", "semiconductors", "cooling", "water", "capex"],
+                "subjects": [{"name": "U.S. AI Infrastructure Market", "type": "market_actor"}],
+                "industries": ["artificial_intelligence", "semiconductors", "utilities", "materials"],
+                "tickers": ["NVDA", "SOXX", "XLU"],
+                "region": "GLOBAL",
+                "event_kind": "industry_trend",
+            }
+        )
+        self.assertIsNotNone(infra_story)
+        self.assertEqual(infra_story["story"], "AI 물리 인프라 비즈니스")
+        self.assertEqual(infra_story["story_family"], "AI 물리 인프라 비즈니스")
+
+        model_story = wm._infer_story_metadata_by_rules(
+            {
+                "title": "프론티어 모델 API 가격 경쟁과 기업용 AI 에이전트 도입",
+                "summary": "OpenAI와 Anthropic의 추론비용, 구독 매출, 기업용 API 채택이 AI 소프트웨어 수익성을 좌우한다.",
+                "tags": ["ai", "llm", "api", "software", "subscription"],
+                "subjects": [{"name": "OpenAI", "type": "company"}],
+                "industries": ["artificial_intelligence", "software", "internet"],
+                "tickers": ["MSFT", "GOOGL"],
+                "region": "GLOBAL",
+                "event_kind": "industry_trend",
+            }
+        )
+        self.assertIsNotNone(model_story)
+        self.assertEqual(model_story["story"], "AI 모델·소프트웨어 비즈니스")
+        self.assertEqual(model_story["story_family"], "AI 모델·소프트웨어 비즈니스")
+
+        software_only_story = wm._infer_story_metadata_by_rules(
+            {
+                "title": "일반 SaaS 기업 실적 호조",
+                "summary": "클라우드 소프트웨어 매출이 증가했지만 특정 자동화 수요와 직접 연결된 신호는 없다.",
+                "tags": ["software", "earnings"],
+                "subjects": [{"name": "U.S. Software Sector", "type": "market_actor"}],
+                "industries": ["software", "internet"],
+                "tickers": ["IGV"],
+                "region": "GLOBAL",
+                "event_kind": "earnings",
+            }
+        )
+        self.assertIsNone(software_only_story)
+
+        catalog_match = wm._route_story_from_catalog(
+            {
+                "title": "일반 SaaS 기업 실적 호조",
+                "summary": "클라우드 소프트웨어 매출이 증가했다.",
+                "tags": ["software", "earnings"],
+                "subjects": [{"name": "U.S. Software Sector", "type": "market_actor"}],
+                "industries": ["software", "internet"],
+                "tickers": ["IGV"],
+                "region": "GLOBAL",
+                "event_kind": "earnings",
+            },
+            [
+                {
+                    "story": "AI 모델·소프트웨어 비즈니스",
+                    "story_key": "ai_모델_소프트웨어_비즈니스",
+                    "story_family": "AI 모델·소프트웨어 비즈니스",
+                    "story_family_key": "ai_모델_소프트웨어_비즈니스",
+                    "story_thesis": "",
+                    "story_checkpoint": "",
+                    "event_count": 3,
+                    "latest_as_of": "2026-05-01T00:00:00+09:00",
+                    "tags": {"software", "earnings"},
+                    "industries": {"software", "internet"},
+                    "tickers": {"IGV"},
+                    "subjects": {"u.s. software sector"},
+                    "event_kinds": {"earnings"},
+                }
+            ],
+        )
+        self.assertIsNone(catalog_match)
+
     def test_derived_state_requires_repeated_issue_story(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "world_issue_log.sqlite3"
@@ -176,6 +254,31 @@ class WorldMemoryCliTests(unittest.TestCase):
 
                 self.assertIsNotNone(derived_state)
                 self.assertEqual(derived_state["state_key"], "반복_전_스토리")
+
+    def test_brief_with_stale_story_thesis_can_become_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "world_issue_log.sqlite3"
+            as_of = dt.datetime(2026, 5, 6, 9, 0, tzinfo=ZoneInfo(wm.DEFAULT_TZ))
+            with wm._connect_db(db_path) as conn:
+                wm._init_db(conn)
+                payload = self._make_brief_payload(
+                    as_of=as_of,
+                    title="일반 미디어 기업 실적 호조",
+                    summary="스트리밍과 파크 수익성이 실적을 지지했다.",
+                    story="AI 투자 레짐",
+                    story_family="AI 투자 레짐",
+                    story_thesis="과거 issue용 논지가 잘못 남아 있다.",
+                    story_checkpoint="cleanup 때 제거돼야 한다.",
+                    tags=["earnings", "media", "consumer"],
+                    subjects=[{"name": "Disney", "type": "company"}],
+                    industries=["media", "consumer", "software"],
+                )
+                normalized = wm._prepare_payload_for_storage(conn, payload, story_catalog=[])
+
+            self.assertNotIn("story", normalized)
+            self.assertNotIn("story_family", normalized)
+            self.assertNotIn("story_thesis", normalized)
+            self.assertNotIn("story_checkpoint", normalized)
 
     def test_normalize_story_links_canonicalizes_family_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

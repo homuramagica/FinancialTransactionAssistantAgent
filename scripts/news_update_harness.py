@@ -13,6 +13,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.news_update_session_lock import (
+    NewsUpdateSessionLockError,
+    news_update_session_lock,
+    subprocess_env_with_session_lock_held,
+)
+
 
 ARTICLE_FILENAME_RE = re.compile(r"^\d{2}-\d{2}-\d{2} \d{2}-\d{2} .+\.md$")
 ERROR_FILENAME_RE = re.compile(r"^ERROR-\d{2}-\d{2}-\d{2} \d{2}-\d{2}\.md$")
@@ -72,18 +82,21 @@ ALLOWED_TRANSITIONS = {
 
 REQUIRED_STATE_KEYS = ("last_run_kst", "bloomberg", "wsj", "barrons")
 
-_CHROME_DEVTOOLS_FETCH_SCRIPT = Path(__file__).resolve().with_name("safari_fetch.py")
 _CHROME_VISIBLE_FETCH_SCRIPT = Path(__file__).resolve().with_name("chrome_visible_fetch.py")
 _FIREFOX_VISIBLE_FETCH_SCRIPT = Path(__file__).resolve().with_name("firefox_visible_fetch.py")
 _DEFAULT_FETCH_TIMEOUT = 15
 _DEFAULT_FETCH_MAX_ATTEMPTS = 2
 _DEFAULT_BROWSER_LOCK_TIMEOUT = 90.0
 _DEFAULT_HARNESS_RECOVERY_WAIT = 1.5
-_DEFAULT_FETCH_BROWSER = "chrome"
+_DEFAULT_FETCH_BROWSER = "chrome-visible"
 _DEFAULT_FETCH_SUBPROCESS_GRACE = 20.0
 _DEFAULT_FETCH_LOCK_TIMEOUT_CAP = 10.0
 _DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT = 20.0
 _DEFAULT_MAX_AUTOMATION_LAG_MINUTES = 30.0
+_DEFAULT_NEWS_UPDATE_SESSION_LOCK_TIMEOUT: float | None = None
+_BLOOMBERG_SHORT_TEXT_THRESHOLD = int(
+    os.environ.get("NEWS_FETCH_BLOOMBERG_SHORT_TEXT_THRESHOLD", "1200")
+)
 
 _AUTOMATION_SCHEDULED_AT_ENV_KEYS = (
     "CODEX_AUTOMATION_SCHEDULED_AT",
@@ -136,7 +149,17 @@ MANUAL_BROWSER_ACTION_SIGNALS = (
     "로그인 또는 구독 확인이 필요한 화면이 반환되었습니다",
 )
 
-_SUPPORTED_FETCH_BROWSERS = ("chrome", "chrome-visible", "firefox-visible")
+BOT_BLOCK_SIGNALS = (
+    "봇 차단 페이지가 반환되었습니다",
+    "are you a robot",
+    "unusual activity",
+    "verify you are human",
+    "bot verification",
+)
+
+_SUPPORTED_FETCH_BROWSERS = ("chrome-visible", "firefox-visible")
+_FETCH_BROWSER_CHOICES = ("chrome", "chrome-visible", "firefox", "firefox-visible")
+_DISABLED_DEVTOOLS_BROWSERS = {"chrome_devtools", "chrome-devtools", "devtools"}
 
 
 def _nfd(value: str) -> str:
@@ -480,6 +503,7 @@ def _run_json_subprocess(
     command: list[str],
     *,
     timeout: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
     try:
         completed = subprocess.run(
@@ -489,6 +513,7 @@ def _run_json_subprocess(
             encoding="utf-8",
             check=False,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         timeout_value = timeout if timeout is not None else exc.timeout
@@ -539,6 +564,81 @@ def _has_signal(text: str, signals: tuple[str, ...]) -> bool:
     return any(signal in text for signal in signals)
 
 
+def _batch_site_key(url: str) -> str:
+    lowered = (url or "").lower()
+    if "bloomberg.com" in lowered:
+        return "bloomberg"
+    if "wsj.com" in lowered or "barrons.com" in lowered:
+        return "dow_jones"
+    return "other"
+
+
+def _fetch_result_hit_bot_block(result: dict[str, Any]) -> bool:
+    parts = [
+        _browser_text(result.get("error")),
+        _browser_text(result.get("title")),
+        _browser_text(result.get("text")),
+    ]
+    return _has_signal("\n".join(parts).lower(), BOT_BLOCK_SIGNALS)
+
+
+def _site_bot_block_skip_result(url: str, blocked_site: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "url": url,
+        "title": "",
+        "text": "",
+        "html": "",
+        "error": (
+            f"{blocked_site} 봇 차단이 같은 배치에서 감지되어 후속 접근을 중단했습니다. "
+            "브라우저 세션을 사람이 확인한 뒤 다음 실행에서 재시도하세요."
+        ),
+        "paywall": False,
+        "skipped": True,
+        "skip_reason": "site_bot_block",
+        "blocked_site": blocked_site,
+    }
+
+
+def _site_manual_check_skip_result(url: str, site: str, reason: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "url": url,
+        "title": "",
+        "text": "",
+        "html": "",
+        "error": (
+            f"{site} {reason} 때문에 같은 배치의 후속 접근을 중단했습니다. "
+            "브라우저 세션을 사람이 확인한 뒤 다음 실행에서 재시도하세요."
+        ),
+        "paywall": False,
+        "skipped": True,
+        "skip_reason": "site_manual_check",
+        "blocked_site": site,
+    }
+
+
+def _fetch_result_hit_bloomberg_suspicious_short(result: dict[str, Any]) -> bool:
+    if not result.get("success"):
+        return False
+    if _batch_site_key(str(result.get("url") or "")) != "bloomberg":
+        return False
+    text = (result.get("text") or "").strip()
+    return len(text) < _BLOOMBERG_SHORT_TEXT_THRESHOLD
+
+
+def _bloomberg_suspicious_short_result(result: dict[str, Any]) -> dict[str, Any]:
+    text_len = len((result.get("text") or "").strip())
+    updated = dict(result)
+    updated["success"] = False
+    updated["suspicious_bloomberg_short_text"] = True
+    updated["error"] = (
+        f"Bloomberg 본문이 {text_len}자로 짧아 세션/페이월/봇 차단 전조로 간주했습니다. "
+        "풍부한 Axios식 기사 발행과 같은 배치 후속 Bloomberg 접근을 중단합니다."
+    )
+    return updated
+
+
 def _needs_manual_browser_action(payload: dict[str, Any]) -> bool:
     return _has_signal(_combined_browser_text(payload), MANUAL_BROWSER_ACTION_SIGNALS)
 
@@ -553,12 +653,14 @@ def _has_browser_crash(payload: dict[str, Any]) -> bool:
 
 def _normalize_fetch_browser(browser: str | None) -> str:
     raw = (browser or _DEFAULT_FETCH_BROWSER).strip().lower()
+    if raw in _DISABLED_DEVTOOLS_BROWSERS:
+        raise ValueError(
+            "Chrome DevTools 본문 수집은 비활성화되었습니다. "
+            "chrome-visible 또는 firefox-visible을 사용하세요."
+        )
     aliases = {
-        "chrome": "chrome",
-        "chrome_devtools": "chrome",
-        "chrome-devtools": "chrome",
-        "devtools": "chrome",
-        "google-chrome": "chrome",
+        "chrome": "chrome-visible",
+        "google-chrome": "chrome-visible",
         "chrome_visible": "chrome-visible",
         "chrome-visible": "chrome-visible",
         "firefox": "firefox-visible",
@@ -682,8 +784,6 @@ def _automation_lag_skip_result(url: str, guard: dict[str, Any]) -> dict[str, An
 
 def _fetch_script_path(browser: str) -> Path:
     normalized = _normalize_fetch_browser(browser)
-    if normalized == "chrome":
-        return _CHROME_DEVTOOLS_FETCH_SCRIPT
     if normalized == "chrome-visible":
         return _CHROME_VISIBLE_FETCH_SCRIPT
     return _FIREFOX_VISIBLE_FETCH_SCRIPT
@@ -697,7 +797,7 @@ def _fetch_subprocess_timeout(
     lock_timeout: float,
 ) -> float:
     normalized_browser = _normalize_fetch_browser(browser)
-    attempt_budget = max_attempts if normalized_browser == "chrome" else 1
+    attempt_budget = 1
     lock_budget = min(max(0.0, float(lock_timeout)), _DEFAULT_FETCH_LOCK_TIMEOUT_CAP)
     runtime_budget = max(1.0, float(timeout)) * max(1, int(attempt_budget))
     return lock_budget + runtime_budget + _DEFAULT_FETCH_SUBPROCESS_GRACE
@@ -721,18 +821,7 @@ def _run_fetch_cli(
         "--lock-timeout",
         str(lock_timeout),
     ]
-    if normalized_browser == "chrome":
-        command.extend(
-            [
-                "--browser",
-                "chrome",
-                "--timeout",
-                str(timeout),
-                "--max-attempts",
-                str(max_attempts),
-            ]
-        )
-    elif normalized_browser == "chrome-visible":
+    if normalized_browser == "chrome-visible":
         command.extend(
             [
                 "--timeout",
@@ -756,6 +845,7 @@ def _run_fetch_cli(
             max_attempts=max_attempts,
             lock_timeout=lock_timeout,
         ),
+        env=subprocess_env_with_session_lock_held(),
     )
     if completed is None:
         error = f"fetch CLI 실행에 실패했습니다. {payload.get('error', '')}".strip()
@@ -799,13 +889,12 @@ def _run_fetch_diagnose(
         "--lock-timeout",
         str(lock_timeout),
     ]
-    if normalized_browser == "chrome":
-        command.extend(["--browser", "chrome"])
     if not close_after:
         command.append("--no-close")
     completed, payload = _run_json_subprocess(
         command,
         timeout=_DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT,
+        env=subprocess_env_with_session_lock_held(),
     )
     if completed is None:
         return {"ready": False, "error": f"browser diagnose 실행에 실패했습니다. {payload.get('error', '')}".strip()}
@@ -833,11 +922,10 @@ def _run_browser_cleanup(*, browser: str, lock_timeout: float) -> dict[str, Any]
         "--lock-timeout",
         str(lock_timeout),
     ]
-    if normalized_browser == "chrome":
-        command.extend(["--browser", "chrome"])
     completed, payload = _run_json_subprocess(
         command,
         timeout=_DEFAULT_DIAGNOSE_SUBPROCESS_TIMEOUT,
+        env=subprocess_env_with_session_lock_held(),
     )
     if completed is None:
         return {
@@ -892,10 +980,32 @@ def _preflight_failure_result(url: str, diagnose: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _session_lock_skip_result(url: str, lock_report: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "success": False,
+        "ok": True,
+        "url": url,
+        "title": "",
+        "text": "",
+        "html": "",
+        "error": None,
+        "paywall": False,
+        "skipped": True,
+        "skip_reason": "session_lock",
+    }
+    result["harness_attempts"] = 0
+    result["skipped_by_session_lock"] = True
+    result["skipped_due_to_session_lock"] = True
+    result["session_lock"] = lock_report
+    return result
+
+
+def _session_lock_report(exc: NewsUpdateSessionLockError) -> dict[str, Any]:
+    return exc.to_report()
+
+
 def _should_degrade_preflight(browser: str, diagnose: dict[str, Any]) -> bool:
     normalized_browser = _normalize_fetch_browser(browser)
-    if normalized_browser != "chrome":
-        return False
     if diagnose.get("ready"):
         return False
     if _needs_manual_browser_action(diagnose):
@@ -914,12 +1024,10 @@ def _should_degrade_preflight(browser: str, diagnose: dict[str, Any]) -> bool:
 
 
 def _fallback_browsers(primary_browser: str, *, allow_chrome_fallback: bool) -> tuple[str, ...]:
-    if primary_browser == "chrome":
-        return ("chrome-visible", "firefox-visible")
     if primary_browser == "chrome-visible":
         return ("firefox-visible",)
     if primary_browser == "firefox-visible" and allow_chrome_fallback:
-        return ("chrome",)
+        return ("chrome-visible",)
     return ()
 
 
@@ -939,7 +1047,7 @@ def _should_try_browser_fallback(
     text = str(result.get("text") or "").strip()
     html = str(result.get("html") or "").strip()
 
-    if primary_browser in {"chrome", "chrome-visible"}:
+    if primary_browser == "chrome-visible":
         return not text and not html
 
     if (
@@ -1008,12 +1116,12 @@ def _attempt_browser_fallbacks(
 
     if attempts:
         primary_result["browser_fallbacks"] = attempts
-        if primary_browser == "firefox-visible" and attempts[0].get("browser") == "chrome":
+        if primary_browser == "firefox-visible" and attempts[0].get("browser") == "chrome-visible":
             primary_result["chrome_fallback"] = attempts[0]
     return None
 
 
-def fetch_article_with_harness(
+def _fetch_article_with_harness_unlocked(
     url: str,
     *,
     browser: str = _DEFAULT_FETCH_BROWSER,
@@ -1097,6 +1205,53 @@ def fetch_article_with_harness(
     return last_result
 
 
+def fetch_article_with_harness(
+    url: str,
+    *,
+    browser: str = _DEFAULT_FETCH_BROWSER,
+    timeout: int = _DEFAULT_FETCH_TIMEOUT,
+    max_attempts: int = _DEFAULT_FETCH_MAX_ATTEMPTS,
+    lock_timeout: float = _DEFAULT_BROWSER_LOCK_TIMEOUT,
+    harness_retries: int = 1,
+    recovery_wait: float = _DEFAULT_HARNESS_RECOVERY_WAIT,
+    allow_chrome_fallback: bool = True,
+    close_after: bool = True,
+    session_lock: bool = True,
+    session_lock_timeout: float | None = _DEFAULT_NEWS_UPDATE_SESSION_LOCK_TIMEOUT,
+) -> dict[str, Any]:
+    if not session_lock:
+        return _fetch_article_with_harness_unlocked(
+            url,
+            browser=browser,
+            timeout=timeout,
+            max_attempts=max_attempts,
+            lock_timeout=lock_timeout,
+            harness_retries=harness_retries,
+            recovery_wait=recovery_wait,
+            allow_chrome_fallback=allow_chrome_fallback,
+            close_after=close_after,
+        )
+
+    try:
+        with news_update_session_lock(
+            reason=f"news_update_harness:fetch-article:{url}",
+            lock_timeout=session_lock_timeout,
+        ):
+            return _fetch_article_with_harness_unlocked(
+                url,
+                browser=browser,
+                timeout=timeout,
+                max_attempts=max_attempts,
+                lock_timeout=lock_timeout,
+                harness_retries=harness_retries,
+                recovery_wait=recovery_wait,
+                allow_chrome_fallback=allow_chrome_fallback,
+                close_after=close_after,
+            )
+    except NewsUpdateSessionLockError as exc:
+        return _session_lock_skip_result(url, _session_lock_report(exc))
+
+
 def fetch_batch_with_harness(
     urls: list[str],
     *,
@@ -1111,11 +1266,11 @@ def fetch_batch_with_harness(
     automation_attempted_at: str | None = None,
     max_automation_lag_minutes: float = _DEFAULT_MAX_AUTOMATION_LAG_MINUTES,
     automation_lag_guard: bool = True,
+    session_lock: bool = True,
+    session_lock_timeout: float | None = _DEFAULT_NEWS_UPDATE_SESSION_LOCK_TIMEOUT,
 ) -> dict[str, Any]:
     normalized_browser = _normalize_fetch_browser(browser)
     reuse_browser_session = normalized_browser in _SUPPORTED_FETCH_BROWSERS
-    cleanup: dict[str, Any] | None = None
-    report: dict[str, Any] = {}
 
     lag_guard = _automation_lag_guard_report(
         scheduled_at=automation_scheduled_at,
@@ -1133,7 +1288,9 @@ def fetch_batch_with_harness(
             "skipped": len(results),
             "skipped_due_to_preflight": False,
             "skipped_due_to_automation_lag": True,
+            "skipped_due_to_session_lock": False,
             "automation_lag_guard": lag_guard,
+            "session_lock": None,
             "preflight": None,
             "preflight_degraded": False,
             "batch_browser_reused": False,
@@ -1141,6 +1298,51 @@ def fetch_batch_with_harness(
             "cleanup": None,
         }
 
+    if session_lock:
+        try:
+            with news_update_session_lock(
+                reason=f"news_update_harness:fetch-batch:{normalized_browser}:{len(urls)}",
+                lock_timeout=session_lock_timeout,
+            ):
+                return fetch_batch_with_harness(
+                    urls,
+                    browser=browser,
+                    timeout=timeout,
+                    max_attempts=max_attempts,
+                    lock_timeout=lock_timeout,
+                    harness_retries=harness_retries,
+                    recovery_wait=recovery_wait,
+                    allow_chrome_fallback=allow_chrome_fallback,
+                    automation_scheduled_at=automation_scheduled_at,
+                    automation_attempted_at=automation_attempted_at,
+                    max_automation_lag_minutes=max_automation_lag_minutes,
+                    automation_lag_guard=automation_lag_guard,
+                    session_lock=False,
+                    session_lock_timeout=session_lock_timeout,
+                )
+        except NewsUpdateSessionLockError as exc:
+            lock_report = _session_lock_report(exc)
+            results = [_session_lock_skip_result(url, lock_report) for url in urls]
+            return {
+                "ok": True,
+                "requested": len(results),
+                "succeeded": 0,
+                "failed": 0,
+                "skipped": len(results),
+                "skipped_due_to_preflight": False,
+                "skipped_due_to_automation_lag": False,
+                "skipped_due_to_session_lock": True,
+                "automation_lag_guard": lag_guard,
+                "session_lock": lock_report,
+                "preflight": None,
+                "preflight_degraded": False,
+                "batch_browser_reused": False,
+                "results": results,
+                "cleanup": None,
+            }
+
+    cleanup: dict[str, Any] | None = None
+    report: dict[str, Any] = {}
     preflight = _run_fetch_diagnose(
         browser=normalized_browser,
         lock_timeout=lock_timeout,
@@ -1165,7 +1367,9 @@ def fetch_batch_with_harness(
                     "skipped": 0,
                     "skipped_due_to_preflight": True,
                     "skipped_due_to_automation_lag": False,
+                    "skipped_due_to_session_lock": False,
                     "automation_lag_guard": lag_guard,
+                    "session_lock": None,
                     "preflight": preflight,
                     "preflight_degraded": False,
                     "batch_browser_reused": reuse_browser_session,
@@ -1173,33 +1377,53 @@ def fetch_batch_with_harness(
                 }
         if not report:
             results: list[dict[str, Any]] = []
+            bot_blocked_sites: set[str] = set()
+            manual_check_sites: dict[str, str] = {}
             for url in urls:
-                results.append(
-                    fetch_article_with_harness(
-                        url,
-                        browser=normalized_browser,
-                        timeout=timeout,
-                        max_attempts=max_attempts,
-                        lock_timeout=lock_timeout,
-                        harness_retries=harness_retries,
-                        recovery_wait=recovery_wait,
-                        allow_chrome_fallback=allow_chrome_fallback,
-                        close_after=not reuse_browser_session,
+                site_key = _batch_site_key(url)
+                if site_key in bot_blocked_sites:
+                    results.append(_site_bot_block_skip_result(url, site_key))
+                    continue
+                if site_key in manual_check_sites:
+                    results.append(
+                        _site_manual_check_skip_result(url, site_key, manual_check_sites[site_key])
                     )
+                    continue
+
+                result = fetch_article_with_harness(
+                    url,
+                    browser=normalized_browser,
+                    timeout=timeout,
+                    max_attempts=max_attempts,
+                    lock_timeout=lock_timeout,
+                    harness_retries=harness_retries,
+                    recovery_wait=recovery_wait,
+                    allow_chrome_fallback=allow_chrome_fallback,
+                    close_after=not reuse_browser_session,
+                    session_lock=False,
                 )
+                if _fetch_result_hit_bloomberg_suspicious_short(result):
+                    result = _bloomberg_suspicious_short_result(result)
+                    manual_check_sites[site_key] = "짧은 Bloomberg 본문 감지"
+                results.append(result)
+                if _fetch_result_hit_bot_block(result):
+                    bot_blocked_sites.add(site_key)
 
             succeeded = sum(1 for item in results if item.get("success"))
             requested = len(results)
-            failed = requested - succeeded
+            skipped = sum(1 for item in results if item.get("skipped"))
+            failed = requested - succeeded - skipped
             report = {
                 "ok": failed == 0,
                 "requested": requested,
                 "succeeded": succeeded,
                 "failed": failed,
-                "skipped": 0,
+                "skipped": skipped,
                 "skipped_due_to_preflight": False,
                 "skipped_due_to_automation_lag": False,
+                "skipped_due_to_session_lock": False,
                 "automation_lag_guard": lag_guard,
+                "session_lock": None,
                 "preflight": preflight,
                 "preflight_degraded": preflight_degraded,
                 "batch_browser_reused": reuse_browser_session,
@@ -1293,8 +1517,8 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch_article.add_argument(
         "--browser",
         default=_DEFAULT_FETCH_BROWSER,
-        choices=list(_SUPPORTED_FETCH_BROWSERS),
-        help="본문 수집에 사용할 브라우저 (기본값: chrome)",
+        choices=list(_FETCH_BROWSER_CHOICES),
+        help="본문 수집에 사용할 브라우저 (기본값: chrome-visible; chrome은 chrome-visible 별칭)",
     )
     fetch_article.add_argument(
         "--timeout",
@@ -1340,13 +1564,13 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch_batch.add_argument(
         "--browser",
         default=_DEFAULT_FETCH_BROWSER,
-        choices=list(_SUPPORTED_FETCH_BROWSERS),
-        help="본문 수집에 사용할 브라우저 (기본값: chrome)",
+        choices=list(_FETCH_BROWSER_CHOICES),
+        help="본문 수집에 사용할 브라우저 (기본값: chrome-visible; chrome은 chrome-visible 별칭)",
     )
     fetch_batch.add_argument(
         "--allow-chrome-fallback",
         action="store_true",
-        help="주 브라우저 실패 시 보조 브라우저 폴백을 허용합니다. 기본값은 비활성화입니다.",
+        help="firefox-visible 실패 시 chrome-visible 폴백을 허용합니다. 기본값은 비활성화입니다.",
     )
     fetch_batch.add_argument(
         "--timeout",
@@ -1504,6 +1728,8 @@ def _cmd_fetch_article(args: argparse.Namespace) -> int:
         recovery_wait=max(0.0, args.recovery_wait),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("skipped_by_session_lock") or result.get("skipped_due_to_session_lock"):
+        return 0
     return 0 if result.get("success") else 1
 
 
@@ -1526,18 +1752,39 @@ def _cmd_fetch_batch(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def _print_session_lock_busy(exc: NewsUpdateSessionLockError) -> None:
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "skipped": True,
+                "skipped_due_to_session_lock": True,
+                "session_lock": _session_lock_report(exc),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "validate-manifest":
-        return _cmd_validate_manifest(args)
-    if args.command == "apply-manifest":
-        return _cmd_apply_manifest(args)
-    if args.command == "validate-files":
-        return _cmd_validate_files(args)
-    if args.command == "validate-dir":
-        return _cmd_validate_dir(args)
+    if args.command in {"validate-manifest", "apply-manifest", "validate-files", "validate-dir"}:
+        try:
+            with news_update_session_lock(reason=f"news_update_harness:{args.command}"):
+                if args.command == "validate-manifest":
+                    return _cmd_validate_manifest(args)
+                if args.command == "apply-manifest":
+                    return _cmd_apply_manifest(args)
+                if args.command == "validate-files":
+                    return _cmd_validate_files(args)
+                if args.command == "validate-dir":
+                    return _cmd_validate_dir(args)
+        except NewsUpdateSessionLockError as exc:
+            _print_session_lock_busy(exc)
+            return 0
     if args.command == "fetch-article":
         return _cmd_fetch_article(args)
     if args.command == "fetch-batch":

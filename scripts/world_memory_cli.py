@@ -899,6 +899,38 @@ def _infer_event_kind_from_payload(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _has_ai_core_signal(payload: dict[str, Any]) -> bool:
+    text = _payload_text_blob(payload)
+    tags = set(_normalize_tags_for_storage(payload.get("tags", [])))
+    industries = set(_normalize_industries_for_storage(payload.get("industries", [])))
+    subject_text = " ".join(_payload_subject_names(payload))
+    return bool(
+        tags & {"ai", "genai", "llm"}
+        or industries & {"artificial_intelligence", "ai_infrastructure"}
+        or _text_has_any(
+            subject_text,
+            (
+                r"\bai\b",
+                r"artificial intelligence",
+                r"openai",
+                r"anthropic",
+                r"deepseek",
+                r"frontier model",
+            ),
+        )
+        or _text_has_any(
+            text,
+            (
+                r"\bai\b",
+                r"artificial intelligence",
+                r"frontier model",
+                r"\bllm\b",
+                r"large language model",
+            ),
+        )
+    )
+
+
 def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | None:
     text = _payload_text_blob(payload)
     tags = set(_normalize_tags_for_storage(payload.get("tags", [])))
@@ -1052,17 +1084,73 @@ def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | 
             )
         )
     )
-    ai_signal = bool(
-        tags & {"ai", "data_centers", "semiconductors", "software", "capex"}
-        or industries & {"artificial_intelligence", "software", "internet", "semiconductors", "utilities"}
-        or _text_has_any(text, (r"\bai\b", r"artificial intelligence", r"data center", r"\bchip\b", r"\bsoftware\b"))
+    ai_signal = _has_ai_core_signal(payload)
+    ai_physical_infra_signal = bool(
+        tags
+        & {
+            "ai_infrastructure",
+            "blackwell",
+            "capex",
+            "chip_stocks",
+            "cooling",
+            "custom_silicon",
+            "data_centers",
+            "gpu",
+            "grid",
+            "hbm",
+            "infrastructure",
+            "memory",
+            "nand",
+            "power",
+            "semiconductors",
+            "ssd",
+            "storage",
+            "water",
+        }
+        or industries
+        & {
+            "ai_infrastructure",
+            "data_centers",
+            "data_storage",
+            "energy_infrastructure",
+            "hardware",
+            "manufacturing",
+            "materials",
+            "power_generation",
+            "semiconductor_equipment",
+            "semiconductors",
+            "supply_chain",
+            "technology_hardware",
+            "utilities",
+        }
+        or _text_has_any(
+            text,
+            (
+                r"data cent(?:er|re)s?",
+                r"\bchips?\b",
+                r"\bgpu\b",
+                r"\bhbm\b",
+                r"\bmemory\b",
+                r"\bnand\b",
+                r"\bssd\b",
+                r"\bsemiconductor",
+                r"custom silicon",
+                r"optical",
+                r"glass substrate",
+                r"advanced packaging",
+                r"power grid",
+                r"power demand",
+                r"\belectricity\b",
+                r"\butilit(?:y|ies)\b",
+                r"cooling",
+                r"water supply",
+                r"data storage",
+                r"project finance",
+                r"\bcapex\b",
+                r"infrastructure",
+            ),
+        )
     )
-    power_signal = bool(
-        tags & {"data_centers", "capex"}
-        or industries & {"utilities", "energy", "energy_infrastructure"}
-        or _text_has_any(text, (r"power grid", r"\belectricity\b", r"\butilit(?:y|ies)\b", r"power demand"))
-    )
-
     if military_signal and middle_east_signal:
         return {
             "story": "미-이란 전쟁",
@@ -1112,19 +1200,19 @@ def _infer_story_metadata_by_rules(payload: dict[str, Any]) -> dict[str, str] | 
             "story_thesis": "비미국 금리·환율 변수는 각국 중앙은행의 방어 모드와 채권 수급 변화가 겹칠 때 개별 시장 스트레스로 번진다.",
             "story_checkpoint": "현지 통화 안정과 입찰 수요 회복, 중앙은행의 완화적 가이던스가 함께 확인되면 방어 스토리는 약해진다.",
         }
-    if ai_signal and power_signal:
+    if ai_signal and ai_physical_infra_signal:
         return {
-            "story": "데이터센터 수요 → 전력 병목",
-            "story_family": "AI 투자 레짐",
-            "story_thesis": "AI 투자 확대의 병목은 연산보다 전력·유틸리티 인프라 조달에서 발생하고 있다.",
-            "story_checkpoint": "전력 인허가, 유틸리티 CAPEX, 장기 공급계약이 원활히 풀리면 병목 스토리는 완화된다.",
+            "story": "AI 물리 인프라 비즈니스",
+            "story_family": "AI 물리 인프라 비즈니스",
+            "story_thesis": "AI 투자는 모델 성능 경쟁을 넘어 반도체, 데이터센터, 전력, 냉각, 소재, 광통신, 물류와 자금조달까지 물리 공급망 전체를 재가격하고 있다.",
+            "story_checkpoint": "반도체·전력·냉각·데이터센터 CAPEX 둔화, 공급 병목 완화, 또는 주요 인프라 기업의 수주/마진 약화가 확인되면 물리 인프라 스토리 강도는 낮아진다.",
         }
     if ai_signal:
         return {
-            "story": "AI 투자 레짐",
-            "story_family": "AI 투자 레짐",
-            "story_thesis": "AI 관련 자본지출과 밸류에이션 재평가가 기술주와 인프라 수요를 함께 흔드는 핵심 축이다.",
-            "story_checkpoint": "CAPEX 둔화와 수요 검증 실패가 확인되면 AI 투자 스토리는 약해진다.",
+            "story": "AI 모델·소프트웨어 비즈니스",
+            "story_family": "AI 모델·소프트웨어 비즈니스",
+            "story_thesis": "프론티어 모델, AI 에이전트, API·구독 매출, 기업용 소프트웨어 도입은 AI 레짐의 수익화 가능성과 경쟁 구도를 검증하는 축이다.",
+            "story_checkpoint": "모델 성능 격차 축소, 추론비용 부담, 기업 도입 지연, 가격경쟁 심화가 동시에 확인되면 모델·소프트웨어 스토리 강도는 낮아진다.",
         }
     return None
 
@@ -1190,12 +1278,17 @@ def _route_story_from_catalog(payload: dict[str, Any], catalog: list[dict[str, A
     payload_tickers = {str(item).strip().upper() for item in payload.get("tickers", []) if str(item).strip()}
     payload_subjects = {name.casefold() for name in _payload_subject_names(payload)}
     payload_event_kind = _normalize_event_kind(str(payload.get("event_kind", "")))
+    payload_has_ai_signal = _has_ai_core_signal(payload)
 
     best_score = 0.0
     best_anchor = 0
     best: dict[str, Any] | None = None
     for candidate in catalog:
         if int(candidate.get("event_count", 0)) < 2:
+            continue
+        candidate_story = str(candidate.get("story", ""))
+        candidate_family = str(candidate.get("story_family", ""))
+        if not payload_has_ai_signal and ("AI" in candidate_story or "AI" in candidate_family):
             continue
 
         tag_overlap = payload_tags & set(candidate.get("tags", set()))
@@ -1348,12 +1441,15 @@ def _enrich_world_issue_payload(
                 "story_checkpoint",
             ):
                 working.pop(field, None)
-        if family:
-            working["story_family"] = family
-            working["story_family_key"] = _normalize_story_family_key(family)
-        else:
-            working["story_family"] = story
-            working["story_family_key"] = _normalize_story_family_key(story)
+            story = ""
+            family = ""
+        if story:
+            if family:
+                working["story_family"] = family
+                working["story_family_key"] = _normalize_story_family_key(family)
+            else:
+                working["story_family"] = story
+                working["story_family_key"] = _normalize_story_family_key(story)
     elif family:
         working["story_family"] = family
         working["story_family_key"] = _normalize_story_family_key(family)

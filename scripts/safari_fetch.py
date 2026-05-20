@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-safari_fetch.py - RSS CSV로 기사 목록을 읽고 Chrome DevTools 기반으로 개별 기사 본문을 추출합니다.
+safari_fetch.py - RSS CSV로 기사 목록을 읽는 호환성 유틸리티입니다.
 
 WSJ/Barron's는 Dow Jones RSS CSV를 한 번 읽어 함께 처리할 수 있고,
 Bloomberg는 전용 Bloomberg RSS CSV를 사용합니다.
-파일명은 호환성을 위해 유지하지만 브라우저 수집 경로는 DevTools 전용입니다.
+NewsCollector 본문 수집은 news_update_harness.py의 chrome-visible /
+firefox-visible 경로만 사용합니다.
 
 사용법:
-  python3 scripts/safari_fetch.py <URL> --browser chrome
   python3 scripts/safari_fetch.py <URL> --links-only --source dow_jones
   python3 scripts/safari_fetch.py <URL> --load-more --source bloomberg
-  python3 scripts/safari_fetch.py <URL> --reload --browser chrome
-  python3 scripts/safari_fetch.py https://www.wsj.com --session-setup
 """
 
 from __future__ import annotations
@@ -26,6 +24,7 @@ import importlib.util
 import json
 import os
 import plistlib
+import random
 import re
 import subprocess
 import sys
@@ -37,6 +36,14 @@ from urllib.request import Request, urlopen
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.news_update_session_lock import (  # noqa: E402
+    NewsUpdateSessionLockError,
+    news_update_session_lock,
+)
+
 DOW_JONES_RSS_CSV_URL = "https://rss.app/feeds/_m6HwVpkVbkV6H1V6.csv"
 BLOOMBERG_RSS_CSV_URL = "https://rss.app/feeds/_t07deORnyZW90CjC.csv"
 _BROWSER_CONFIG = {
@@ -63,13 +70,11 @@ _BROWSER_LOCK_PATH = os.environ.get("NEWS_FETCH_LOCK_PATH", "/tmp/safari_fetch_b
 _DEFAULT_BROWSER_LOCK_TIMEOUT = float(os.environ.get("NEWS_FETCH_LOCK_TIMEOUT", "90"))
 _BROWSER_LOCK_POLL_INTERVAL = 0.25
 _SITE_THROTTLE_STATE_PATH = os.environ.get("NEWS_FETCH_SITE_THROTTLE_STATE_PATH", "/tmp/safari_fetch_site_throttle.json")
-_SITE_THROTTLE_INTERVAL_SECONDS = float(os.environ.get("NEWS_FETCH_SITE_THROTTLE_INTERVAL_SECONDS", "10"))
-_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS = float(
-    os.environ.get("NEWS_FETCH_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS", "20")
-)
-_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS = float(
-    os.environ.get("NEWS_FETCH_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS", "10")
-)
+_SITE_THROTTLE_INTERVAL_SECONDS = os.environ.get("NEWS_FETCH_SITE_THROTTLE_INTERVAL_SECONDS")
+_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS = os.environ.get("NEWS_FETCH_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS")
+_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS = os.environ.get("NEWS_FETCH_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS")
+_SITE_THROTTLE_MIN_SECONDS = float(os.environ.get("NEWS_FETCH_SITE_THROTTLE_MIN_SECONDS", "20"))
+_SITE_THROTTLE_MAX_SECONDS = float(os.environ.get("NEWS_FETCH_SITE_THROTTLE_MAX_SECONDS", "40"))
 _HTML_SNIPPET_LIMIT = 60_000
 _TEXT_HEALTHY_THRESHOLD = 200
 _PAGE_SETTLE_DELAY_SECONDS = 0.8
@@ -238,12 +243,38 @@ def _save_site_throttle_state(state: dict[str, float]) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _optional_interval(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return max(0.0, float(value))
+    except Exception:
+        return None
+
+
+def _random_site_throttle_interval() -> float:
+    low = max(0.0, float(_SITE_THROTTLE_MIN_SECONDS))
+    high = max(0.0, float(_SITE_THROTTLE_MAX_SECONDS))
+    if high < low:
+        low, high = high, low
+    if high == low:
+        return low
+    return random.uniform(low, high)
+
+
 def _site_throttle_interval_for(key: str) -> float:
     if key == "bloomberg":
-        return max(0.0, float(_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS))
+        fixed = _optional_interval(_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS)
+        if fixed is not None:
+            return fixed
     if key == "dow_jones":
-        return max(0.0, float(_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS))
-    return max(0.0, float(_SITE_THROTTLE_INTERVAL_SECONDS))
+        fixed = _optional_interval(_DOW_JONES_SITE_THROTTLE_INTERVAL_SECONDS)
+        if fixed is not None:
+            return fixed
+    fixed = _optional_interval(_SITE_THROTTLE_INTERVAL_SECONDS)
+    if fixed is not None:
+        return fixed
+    return _random_site_throttle_interval()
 
 
 def _wait_for_site_access_slot(url: str) -> dict[str, Any]:
@@ -264,6 +295,7 @@ def _wait_for_site_access_slot(url: str) -> dict[str, Any]:
     return {
         "site": key,
         "wait_seconds": round(wait_seconds, 3),
+        "interval_seconds": round(interval, 3),
         "throttled": wait_seconds > 0,
         "accessed_at": accessed_at,
     }
@@ -675,11 +707,16 @@ def _should_try_bloomberg_reload(
     Bloomberg에서 로그인/쿠키 상태가 아직 적용되지 않은 흔적이 보이면
     자동으로 새로고침 1회를 시도합니다.
     """
-    if reload_used or not close_after:
+    del close_after
+    if reload_used:
         return False
     if not _host_matches(url, "bloomberg.com"):
         return False
-    if not result.get("success"):
+    if _detect_bot_block(
+        str(result.get("title") or ""),
+        str(result.get("text") or ""),
+        str(result.get("html") or ""),
+    ):
         return False
     if result.get("paywall"):
         return True
@@ -688,7 +725,7 @@ def _should_try_bloomberg_reload(
     html = (result.get("html") or "")[:2500]
     if _contains_login_prompt(text, html):
         return True
-    return len((result.get("text") or "").strip()) < _BLOOMBERG_SHORT_TEXT_THRESHOLD
+    return bool(result.get("success")) and len((result.get("text") or "").strip()) < _BLOOMBERG_SHORT_TEXT_THRESHOLD
 
 
 def _payload_best_text(payload: dict[str, Any]) -> str:
@@ -1812,58 +1849,77 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.close_browser:
-        result = close_browser(
-            args.browser,
-            lock_timeout=args.lock_timeout,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        sys.exit(0 if result.get("ok") else 1)
-    elif args.diagnose:
-        print(
-            json.dumps(
-                diagnose(
+    try:
+        with news_update_session_lock(reason=f"safari_fetch:{args.browser}"):
+            if args.close_browser:
+                result = close_browser(
                     args.browser,
                     lock_timeout=args.lock_timeout,
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                sys.exit(0 if result.get("ok") else 1)
+            elif args.diagnose:
+                print(
+                    json.dumps(
+                        diagnose(
+                            args.browser,
+                            lock_timeout=args.lock_timeout,
+                            close_after=not args.no_close,
+                        ),
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            elif args.session_setup:
+                if not args.url:
+                    parser.error("session-setup에는 URL이 필요합니다.")
+                result = prepare_session(
+                    args.url,
+                    browser=args.browser,
+                    lock_timeout=args.lock_timeout,
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            elif not args.url:
+                parser.error("URL이 필요합니다. 진단만 할 때는 --diagnose를 사용하세요.")
+            elif args.links_only:
+                links = get_article_links(args.url, args.source, args.timeout)
+                print(json.dumps(links, ensure_ascii=False, indent=2))
+            elif args.load_more:
+                links = bloomberg_load_more(args.url, timeout=args.timeout)
+                print(json.dumps(links, ensure_ascii=False, indent=2))
+            elif args.reload:
+                result = fetch_with_reload(
+                    args.url,
+                    args.timeout,
+                    browser=args.browser,
+                    lock_timeout=args.lock_timeout,
                     close_after=not args.no_close,
-                ),
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                result = fetch(
+                    args.url,
+                    args.timeout,
+                    not args.no_close,
+                    browser=args.browser,
+                    max_attempts=args.max_attempts,
+                    lock_timeout=args.lock_timeout,
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+    except NewsUpdateSessionLockError as exc:
+        print(
+            json.dumps(
+                {
+                    "success": False,
+                    "ok": True,
+                    "skipped": True,
+                    "skipped_due_to_session_lock": True,
+                    "skip_reason": "session_lock",
+                    "error": None,
+                    "session_lock": exc.to_report(),
+                },
                 ensure_ascii=False,
                 indent=2,
             )
         )
-    elif args.session_setup:
-        if not args.url:
-            parser.error("session-setup에는 URL이 필요합니다.")
-        result = prepare_session(
-            args.url,
-            browser=args.browser,
-            lock_timeout=args.lock_timeout,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    elif not args.url:
-        parser.error("URL이 필요합니다. 진단만 할 때는 --diagnose를 사용하세요.")
-    elif args.links_only:
-        links = get_article_links(args.url, args.source, args.timeout)
-        print(json.dumps(links, ensure_ascii=False, indent=2))
-    elif args.load_more:
-        links = bloomberg_load_more(args.url, timeout=args.timeout)
-        print(json.dumps(links, ensure_ascii=False, indent=2))
-    elif args.reload:
-        result = fetch_with_reload(
-            args.url,
-            args.timeout,
-            browser=args.browser,
-            lock_timeout=args.lock_timeout,
-            close_after=not args.no_close,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    else:
-        result = fetch(
-            args.url,
-            args.timeout,
-            not args.no_close,
-            browser=args.browser,
-            max_attempts=args.max_attempts,
-            lock_timeout=args.lock_timeout,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0)

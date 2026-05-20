@@ -40,7 +40,7 @@ class ChromeVisibleFetchTests(unittest.TestCase):
             report = cvf.diagnose(lock_timeout=0.1)
 
         self.assertFalse(report["ready"])
-        self.assertEqual(report["browser"], "chrome")
+        self.assertEqual(report["browser"], "chrome-visible")
         self.assertEqual(report["browser_engine"], "chrome-visible")
         self.assertFalse(report["remote_debugging"])
         self.assertEqual(report["launch_probe"]["detail"], "launch failed")
@@ -137,6 +137,55 @@ class ChromeVisibleFetchTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         mock_window.assert_called_once_with("about:blank", reuse_existing=True)
+        mock_quit.assert_not_called()
+
+    def test_fetch_article_reloads_short_bloomberg_once_even_in_batch(self) -> None:
+        short_result = {
+            "success": True,
+            "url": "https://www.bloomberg.com/news/articles/example",
+            "title": "Short Bloomberg",
+            "text": "짧은 본문 " * 40,
+            "html": "<article>짧은 본문</article>",
+            "error": None,
+            "paywall": False,
+            "browser_engine": "chrome-visible",
+            "throttle": {"site": "bloomberg"},
+        }
+        long_result = {
+            "success": True,
+            "url": "https://www.bloomberg.com/news/articles/example",
+            "title": "Full Bloomberg",
+            "text": "긴 본문 " * 240,
+            "html": "<article>긴 본문</article>",
+            "error": None,
+            "paywall": False,
+            "browser_engine": "chrome-visible",
+            "throttle": {"site": "bloomberg"},
+        }
+
+        with mock.patch.object(cvf.shared, "_canonicalize_url", return_value="https://www.bloomberg.com/news/articles/example"), \
+             mock.patch.object(cvf, "_ensure_chrome_available", return_value=None), \
+             mock.patch.object(cvf.shared, "_browser_session_lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, a, b, c: None)), \
+             mock.patch.object(cvf.shared, "_wait_for_site_access_slot", return_value={"site": "bloomberg"}), \
+             mock.patch.object(cvf, "_ensure_chrome_window", return_value=123), \
+             mock.patch.object(cvf, "_navigate_tab"), \
+             mock.patch.object(cvf, "_wait_for_page_ready", return_value="https://www.bloomberg.com/news/articles/example"), \
+             mock.patch.object(cvf, "_copy_visible_page_text", side_effect=["짧은 본문 " * 40, "긴 본문 " * 240]), \
+             mock.patch.object(cvf, "_copy_view_source_html_and_close_tabs", side_effect=["<article>짧은 본문</article>", "<article>긴 본문</article>"]), \
+             mock.patch.object(cvf, "_build_result_from_copied_content", side_effect=[dict(short_result), dict(long_result)]), \
+             mock.patch.object(cvf, "_reload_tab") as mock_reload, \
+             mock.patch.object(cvf, "_quit_chrome") as mock_quit:
+            result = cvf.fetch_article(
+                "https://www.bloomberg.com/news/articles/example",
+                timeout=5,
+                lock_timeout=0.1,
+                close_after=False,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["reloaded_once"])
+        self.assertEqual(result["title"], "Full Bloomberg")
+        mock_reload.assert_called_once_with(123)
         mock_quit.assert_not_called()
 
     def test_close_browser_quits_chrome_once(self) -> None:

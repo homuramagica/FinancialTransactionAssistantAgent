@@ -15,6 +15,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import safari_fetch as sf  # noqa: E402
+from scripts.news_update_session_lock import (  # noqa: E402
+    NewsUpdateSessionLockError,
+    news_update_session_lock,
+)
 
 
 SOURCE_ORDER = ("bloomberg", "wsj", "barrons")
@@ -229,12 +233,34 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    payload = build_candidate_queue(
-        workspace=args.workspace,
-        timeout=args.timeout,
-        source=args.source,
-        limit_per_source=max(0, args.limit_per_source),
-    )
+    try:
+        with news_update_session_lock(reason="news_update_queue"):
+            payload = build_candidate_queue(
+                workspace=args.workspace,
+                timeout=args.timeout,
+                source=args.source,
+                limit_per_source=max(0, args.limit_per_source),
+            )
+    except NewsUpdateSessionLockError as exc:
+        payload = {
+            "ok": True,
+            "skipped": True,
+            "skipped_due_to_session_lock": True,
+            "session_lock": exc.to_report(),
+            "sources": [],
+            "total_new_candidates": 0,
+        }
+        if args.format == "json":
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print("# NewsUpdate 후보 큐\n")
+            print("다른 NewsCollector 세션이 실행 중이라 후보 큐 조회를 시작하지 않았습니다.")
+            print(f"- 세션 락: `{exc.lock_path}`")
+            holder = exc.holder
+            if holder:
+                print(f"- 현재 보유자: pid `{holder.get('pid', '<unknown>')}`, reason `{holder.get('reason', '<unknown>')}`")
+            print(f"- 상세: {exc}")
+        return 0
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:

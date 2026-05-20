@@ -23,6 +23,13 @@ except ModuleNotFoundError:
 
 KST = ZoneInfo("Asia/Seoul")
 HAS_PLOTLY = go is not None and plotly_to_html is not None
+UNDERLYING_SYMBOL = "^NDX"
+UNDERLYING_LABEL = "NDX"
+REPORT_SLUG = "ndx"
+VFTW1_SYMBOL = "^VFTW1"
+VFTW2_SYMBOL = "^VFTW2"
+VX_PROXY_FRONT_SYMBOL = "VIXY"
+VX_PROXY_SECOND_SYMBOL = "VIXM"
 
 
 def _project_root() -> Path:
@@ -49,7 +56,7 @@ def _ensure_supported_runtime() -> None:
             f"현재 인터프리터: {current_python}\n"
             f"현재 prefix: {current_prefix}\n"
             f"권장 인터프리터: {venv_python}\n"
-            f"실행 예시: {venv_python} {Path(__file__).resolve()} --period 2y --max-exp 5 --outdir reports"
+            f"실행 예시: {venv_python} {Path(__file__).resolve()} --period 2y --max-exp 20 --outdir reports"
         )
 
     if not HAS_PLOTLY:
@@ -77,7 +84,7 @@ def _safe_num(value: float | int | np.number | None) -> float:
 def _fmt_price(value: float) -> str:
     if np.isnan(value):
         return "N/A"
-    return f"${value:,.2f}"
+    return f"{value:,.2f}"
 
 
 def _fmt_pct(value: float) -> str:
@@ -92,30 +99,34 @@ def _fmt_ratio(value: float) -> str:
     return f"{value:.2f}"
 
 
+def _fmt_sigma(value: float) -> str:
+    if np.isnan(value):
+        return "N/A"
+    return f"{value:.2f}σ"
+
+
 def _fmt_delta(value: float) -> str:
     if np.isnan(value):
         return "N/A"
     return f"{value:+.2f}"
 
 
-def _calculate_rsi(series: pd.Series, window: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=window, min_periods=window).mean()
-    avg_loss = loss.rolling(window=window, min_periods=window).mean()
-    rs = avg_gain / (avg_loss + 1e-9)
-    return 100 - (100 / (1 + rs))
-
-
-def _calculate_macd(
-    series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
-) -> tuple[pd.Series, pd.Series, pd.Series]:
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    macd_signal = macd.ewm(span=signal, adjust=False).mean()
-    return macd, macd_signal, macd - macd_signal
+def _zscore_state(zscore: float) -> str:
+    if np.isnan(zscore):
+        return "판정 유보"
+    if zscore >= 3:
+        return "상방 초과열"
+    if zscore >= 2:
+        return "상방 과열"
+    if zscore >= 1:
+        return "상방 확장"
+    if zscore <= -3:
+        return "하방 초과매도"
+    if zscore <= -2:
+        return "하방 과매도"
+    if zscore <= -1:
+        return "하방 확장"
+    return "중립권"
 
 
 def _norm_cdf(x: float) -> float:
@@ -236,18 +247,64 @@ def _get_past_row(df: pd.DataFrame, trading_days: int) -> pd.Series:
     return df.iloc[0]
 
 
-def _check_divergence(df: pd.DataFrame, window: int = 20) -> str:
+def _check_zscore_divergence(df: pd.DataFrame, window: int = 20) -> str:
     if len(df) < window + 1:
         return "None"
     cp, pp = _safe_num(df["Close"].iloc[-1]), _safe_num(df["Close"].iloc[-window])
-    cr, pr = _safe_num(df["RSI"].iloc[-1]), _safe_num(df["RSI"].iloc[-window])
+    cr, pr = _safe_num(df["ZSCORE120"].iloc[-1]), _safe_num(df["ZSCORE120"].iloc[-window])
     if any(np.isnan(v) for v in [cp, pp, cr, pr]):
         return "None"
     if cp > pp and cr < pr:
-        return "BEARISH (P↑ R↓)"
+        return "BEARISH (P↑ Z↓)"
     if cp < pp and cr > pr:
-        return "BULLISH (P↓ R↑)"
+        return "BULLISH (P↓ Z↑)"
     return "None"
+
+
+def _calculate_supertrend(
+    df: pd.DataFrame, atr_window: int = 10, multiplier: float = 3.0
+) -> tuple[pd.Series, pd.Series]:
+    if df.empty or "ATR10" not in df.columns:
+        return pd.Series(np.nan, index=df.index), pd.Series("UNKNOWN", index=df.index, dtype="object")
+
+    hl2 = (df["High"] + df["Low"]) / 2.0
+    basic_upper = hl2 + multiplier * df["ATR10"]
+    basic_lower = hl2 - multiplier * df["ATR10"]
+
+    final_upper = pd.Series(np.nan, index=df.index, dtype="float64")
+    final_lower = pd.Series(np.nan, index=df.index, dtype="float64")
+    direction = pd.Series("UNKNOWN", index=df.index, dtype="object")
+    supertrend = pd.Series(np.nan, index=df.index, dtype="float64")
+
+    prev_dir = "BULL"
+    for i, idx in enumerate(df.index):
+        bu = _safe_num(basic_upper.iloc[i])
+        bl = _safe_num(basic_lower.iloc[i])
+        close = _safe_num(df["Close"].iloc[i])
+        if np.isnan(bu) or np.isnan(bl) or np.isnan(close):
+            continue
+
+        if i == 0 or np.isnan(final_upper.iloc[i - 1]) or np.isnan(final_lower.iloc[i - 1]):
+            final_upper.iloc[i] = bu
+            final_lower.iloc[i] = bl
+            prev_dir = "BULL" if close >= hl2.iloc[i] else "BEAR"
+        else:
+            prev_close = _safe_num(df["Close"].iloc[i - 1])
+            prev_upper = _safe_num(final_upper.iloc[i - 1])
+            prev_lower = _safe_num(final_lower.iloc[i - 1])
+
+            final_upper.iloc[i] = bu if bu < prev_upper or prev_close > prev_upper else prev_upper
+            final_lower.iloc[i] = bl if bl > prev_lower or prev_close < prev_lower else prev_lower
+
+            if close > prev_upper:
+                prev_dir = "BULL"
+            elif close < prev_lower:
+                prev_dir = "BEAR"
+
+        direction.iloc[i] = prev_dir
+        supertrend.iloc[i] = final_lower.iloc[i] if prev_dir == "BULL" else final_upper.iloc[i]
+
+    return supertrend, direction
 
 
 def _analyze_smc_amd_flow(df: pd.DataFrame) -> dict[str, object]:
@@ -288,7 +345,7 @@ def _analyze_smc_amd_flow(df: pd.DataFrame) -> dict[str, object]:
     }
 
 
-def _analyze_macro(df_qqq: pd.DataFrame, lookback: int = 60) -> dict[str, float | str] | None:
+def _analyze_macro(df_underlying: pd.DataFrame, lookback: int = 60) -> dict[str, float | str] | None:
     try:
         macro_tickers = ["^TNX", "SPY", "^VIX", "DX-Y.NYB", "SOXX"]
         raw = yf.download(macro_tickers, period="2y", progress=False, auto_adjust=True)
@@ -298,17 +355,30 @@ def _analyze_macro(df_qqq: pd.DataFrame, lookback: int = 60) -> dict[str, float 
         if isinstance(macro_data.columns, pd.MultiIndex):
             macro_data.columns = macro_data.columns.get_level_values(0)
 
-        combined = pd.concat([df_qqq["Close"], macro_data], axis=1, sort=False).ffill().dropna()
-        combined.columns = ["QQQ"] + list(macro_data.columns)
+        def _normalized_dates(index: pd.Index) -> pd.DatetimeIndex:
+            dates = pd.DatetimeIndex(pd.to_datetime(index))
+            if dates.tz is not None:
+                dates = dates.tz_localize(None)
+            return dates.normalize()
+
+        underlying_close = df_underlying["Close"].copy()
+        underlying_close.index = _normalized_dates(underlying_close.index)
+        macro_data = macro_data.copy()
+        macro_data.index = _normalized_dates(macro_data.index)
+
+        combined = pd.concat([underlying_close.rename(UNDERLYING_LABEL), macro_data], axis=1, join="inner")
+        combined = combined.ffill().dropna()
+        combined.columns = [UNDERLYING_LABEL] + list(macro_data.columns)
         if len(combined) < max(lookback + 5, 40):
             return None
 
         pct = combined.pct_change()
-        yield_corr = _safe_num(pct["QQQ"].rolling(lookback).corr(pct["^TNX"]).iloc[-1])
-        dxy_corr = _safe_num(pct["QQQ"].rolling(lookback).corr(pct["DX-Y.NYB"]).iloc[-1])
-        soxx_corr = _safe_num(pct["QQQ"].rolling(lookback).corr(pct["SOXX"]).iloc[-1])
-        rs_slope = _safe_num((combined["QQQ"] / combined["SPY"]).pct_change(20).iloc[-1] * 100)
+        yield_corr = _safe_num(pct[UNDERLYING_LABEL].rolling(lookback).corr(pct["^TNX"]).iloc[-1])
+        dxy_corr = _safe_num(pct[UNDERLYING_LABEL].rolling(lookback).corr(pct["DX-Y.NYB"]).iloc[-1])
+        soxx_corr = _safe_num(pct[UNDERLYING_LABEL].rolling(lookback).corr(pct["SOXX"]).iloc[-1])
+        rs_slope = _safe_num((combined[UNDERLYING_LABEL] / combined["SPY"]).pct_change(20).iloc[-1] * 100)
         vix_curr = _safe_num(combined["^VIX"].iloc[-1])
+        vix_status = "UNKNOWN" if np.isnan(vix_curr) else ("CALM" if vix_curr < 20 else "FEAR")
 
         return {
             "yield_corr": yield_corr,
@@ -317,7 +387,7 @@ def _analyze_macro(df_qqq: pd.DataFrame, lookback: int = 60) -> dict[str, float 
             "dollar_idx": _safe_num(combined["DX-Y.NYB"].iloc[-1]),
             "soxx_corr": soxx_corr,
             "vix_curr": vix_curr,
-            "vix_status": "CALM" if vix_curr < 20 else "FEAR",
+            "vix_status": vix_status,
             "rs_slope_20d": rs_slope,
         }
     except Exception:
@@ -327,20 +397,21 @@ def _analyze_macro(df_qqq: pd.DataFrame, lookback: int = 60) -> dict[str, float 
 def _compute_composite_score(
     curr: pd.Series, macro: dict[str, float | str] | None, smc: dict[str, object]
 ) -> float:
-    rsi = _safe_num(curr.get("RSI"))
-    bbw = _safe_num(curr.get("BB_Width"))
-    trend_strength = _safe_num(curr.get("TREND_STRENGTH"))
+    zscore = _safe_num(curr.get("ZSCORE120"))
+    ma120_gap = _safe_num(curr.get("MA120_GAP"))
 
-    rsi_s = 50 - abs(rsi - 50) if not np.isnan(rsi) else 0
-    bw_score = max(0, 20 - bbw) if not np.isnan(bbw) else 0
-    trend_score = np.tanh((0 if np.isnan(trend_strength) else trend_strength) / 10) * 20
-    tech_score = rsi_s * 0.3 + bw_score * 0.2 + trend_score
+    z_balance = max(0, 3.5 - abs(zscore)) * 8 if not np.isnan(zscore) else 10
+    trend_score = np.tanh((0 if np.isnan(ma120_gap) else ma120_gap) / 6) * 20
+    overheat_penalty = -8 if not np.isnan(zscore) and abs(zscore) >= 3 else 0
+    tech_score = z_balance + trend_score + overheat_penalty
 
     if macro is None:
         base = tech_score + 30
     else:
-        macro_bonus = 10 if macro.get("vix_status") == "CALM" else -10
-        dxy_bonus = 5 if _safe_num(macro.get("dxy_corr")) < 0 else -5
+        vix_status = macro.get("vix_status")
+        macro_bonus = 10 if vix_status == "CALM" else -10 if vix_status == "FEAR" else 0
+        dxy_corr = _safe_num(macro.get("dxy_corr"))
+        dxy_bonus = 0 if np.isnan(dxy_corr) else 5 if dxy_corr < 0 else -5
         base = tech_score + macro_bonus + dxy_bonus + 30
 
     smc_bonus = 5 if smc.get("sweep_low") else (-5 if smc.get("sweep_high") else 0)
@@ -348,24 +419,29 @@ def _compute_composite_score(
 
 
 def _prepare_price_data(period: str) -> pd.DataFrame:
-    df = yf.download("QQQ", period=period, auto_adjust=True, progress=False)
+    df = yf.download(UNDERLYING_SYMBOL, period=period, auto_adjust=True, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     if df.empty:
-        raise RuntimeError("QQQ 가격 데이터를 가져오지 못했습니다.")
+        raise RuntimeError(f"{UNDERLYING_LABEL} 가격 데이터를 가져오지 못했습니다.")
 
     out = df.copy()
-    out["MA200"] = out["Close"].rolling(200, min_periods=50).mean()
-    out["MA50"] = out["Close"].rolling(50, min_periods=20).mean()
-    out["MA20"] = out["Close"].rolling(20, min_periods=20).mean()
-    out["STD20"] = out["Close"].rolling(20, min_periods=20).std()
-    out["BB_Upper"] = out["MA20"] + out["STD20"] * 2
-    out["BB_Lower"] = out["MA20"] - out["STD20"] * 2
-    out["BB_Width"] = (out["BB_Upper"] - out["BB_Lower"]) / (out["MA20"] + 1e-9) * 100
+    out["MA120"] = out["Close"].rolling(120, min_periods=60).mean()
+    out["MA120_RESID"] = out["Close"] - out["MA120"]
+    out["MA120_SIGMA"] = out["MA120_RESID"].rolling(120, min_periods=60).std()
+    out["ZSCORE120"] = out["MA120_RESID"] / (out["MA120_SIGMA"] + 1e-9)
+    out["MA120_GAP"] = out["MA120_RESID"] / (out["MA120"] + 1e-9) * 100
+    for sigma in (1, 2, 3):
+        out[f"MA120_P{sigma}"] = out["MA120"] + out["MA120_SIGMA"] * sigma
+        out[f"MA120_M{sigma}"] = out["MA120"] - out["MA120_SIGMA"] * sigma
     out["Avg_Vol"] = out["Volume"].rolling(20, min_periods=5).mean()
+    out["Traded_Value"] = out["Close"] * out["Volume"]
+    out["Avg_Traded_Value"] = out["Traded_Value"].rolling(20, min_periods=5).mean()
     out["RET_1D"] = out["Close"].pct_change(1) * 100
     out["RET_5D"] = out["Close"].pct_change(5) * 100
     out["RET_1M"] = out["Close"].pct_change(21) * 100
+    out["Daily_Return"] = out["Close"].pct_change()
+    out["Volatility"] = out["Daily_Return"].rolling(20, min_periods=10).std(ddof=0) * np.sqrt(365) * 100
 
     tr = pd.concat(
         [
@@ -375,11 +451,10 @@ def _prepare_price_data(period: str) -> pd.DataFrame:
         ],
         axis=1,
     ).max(axis=1)
+    out["ATR10"] = tr.rolling(10).mean()
     out["ATR14"] = tr.rolling(14).mean()
-    out["RV20"] = out["Close"].pct_change().rolling(20).std() * np.sqrt(252) * 100
-    out["RSI"] = _calculate_rsi(out["Close"])
-    out["MACD"], out["MACD_SIGNAL"], out["MACD_HIST"] = _calculate_macd(out["Close"])
-    out["TREND_STRENGTH"] = (out["MA50"] - out["MA200"]).abs() / (out["ATR14"] + 1e-9)
+    out["SUPERTREND_10_3"], out["SUPERTREND_10_3_DIR"] = _calculate_supertrend(out, 10, 3.0)
+    out["RV20"] = out["Volatility"]
     out["Rolling_Ret"] = out["Close"].pct_change(20) * 100
 
     anchor_lookback = out["Low"].tail(min(120, len(out)))
@@ -388,15 +463,94 @@ def _prepare_price_data(period: str) -> pd.DataFrame:
     return out
 
 
+def _extract_close_frame(raw: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame()
+    if isinstance(raw.columns, pd.MultiIndex):
+        if "Close" not in raw.columns.get_level_values(0):
+            return pd.DataFrame()
+        close = raw["Close"].copy()
+    else:
+        if "Close" not in raw.columns:
+            return pd.DataFrame()
+        close = raw[["Close"]].rename(columns={"Close": symbols[0] if symbols else "UNKNOWN"})
+
+    if isinstance(close, pd.Series):
+        close = close.to_frame(name=symbols[0] if symbols else "UNKNOWN")
+    close = close.copy()
+    close.columns = [str(c) for c in close.columns]
+    idx = pd.DatetimeIndex(pd.to_datetime(close.index))
+    if idx.tz is not None:
+        idx = idx.tz_convert(None)
+    close.index = idx.normalize()
+    return close
+
+
+def _prepare_vftw_snapshot_data() -> pd.DataFrame:
+    try:
+        raw = yf.download(
+            [VFTW1_SYMBOL, VFTW2_SYMBOL],
+            period="5d",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    close = _extract_close_frame(raw, [VFTW1_SYMBOL, VFTW2_SYMBOL])
+    if close.empty or VFTW1_SYMBOL not in close.columns or VFTW2_SYMBOL not in close.columns:
+        return pd.DataFrame()
+
+    out = close[[VFTW1_SYMBOL, VFTW2_SYMBOL]].rename(columns={VFTW1_SYMBOL: "VX1", VFTW2_SYMBOL: "VX2"})
+    out = out.apply(pd.to_numeric, errors="coerce").dropna(subset=["VX1", "VX2"])
+    out = out[out["VX2"] != 0]
+    if out.empty:
+        return out
+
+    out["VX1_DIV_VX2"] = out["VX1"] / out["VX2"]
+    out["VFTW_HAPPINESS"] = (out["VX1_DIV_VX2"] - 1.0) * -100.0
+    return out
+
+
+def _prepare_vx_proxy_momentum_data(period: str) -> pd.DataFrame:
+    try:
+        raw = yf.download(
+            [VX_PROXY_FRONT_SYMBOL, VX_PROXY_SECOND_SYMBOL],
+            period=period,
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    close = _extract_close_frame(raw, [VX_PROXY_FRONT_SYMBOL, VX_PROXY_SECOND_SYMBOL])
+    if close.empty or VX_PROXY_FRONT_SYMBOL not in close.columns or VX_PROXY_SECOND_SYMBOL not in close.columns:
+        return pd.DataFrame()
+
+    out = close[[VX_PROXY_FRONT_SYMBOL, VX_PROXY_SECOND_SYMBOL]].rename(
+        columns={VX_PROXY_FRONT_SYMBOL: "VIXY", VX_PROXY_SECOND_SYMBOL: "VIXM"}
+    )
+    out = out.apply(pd.to_numeric, errors="coerce").dropna(subset=["VIXY", "VIXM"])
+    out = out[out["VIXM"] != 0]
+    if out.empty:
+        return out
+
+    out["VIXY_DIV_VIXM"] = out["VIXY"] / out["VIXM"]
+    out["VX_PROXY_MOMENTUM"] = (out["VIXY_DIV_VIXM"] - 1.0) * -100.0
+    return out
+
+
 def _fetch_option_data(max_exp: int, strike_band: float) -> tuple[pd.DataFrame, list[str], float]:
-    ticker = yf.Ticker("QQQ")
+    ticker = yf.Ticker(UNDERLYING_SYMBOL)
     expiries = list(ticker.options[:max_exp])
     if not expiries:
-        raise RuntimeError("QQQ 옵션 만기 정보를 가져오지 못했습니다.")
+        raise RuntimeError(f"{UNDERLYING_LABEL} 옵션 만기 정보를 가져오지 못했습니다.")
 
     hist = ticker.history(period="5d", auto_adjust=False)
     if hist.empty:
-        raise RuntimeError("QQQ 최근 종가를 가져오지 못했습니다.")
+        raise RuntimeError(f"{UNDERLYING_LABEL} 최근 종가를 가져오지 못했습니다.")
     last_close = float(hist["Close"].iloc[-1])
 
     frames: list[pd.DataFrame] = []
@@ -500,64 +654,131 @@ def _compute_term_structure(df_opt: pd.DataFrame, spot: float) -> pd.DataFrame:
     return out
 
 
+def _compute_target_atm_iv(term_df: pd.DataFrame, target_dte: int = 30) -> float:
+    if term_df.empty:
+        return float("nan")
+    term = term_df[["dte", "atm_iv"]].dropna().sort_values("dte")
+    if term.empty:
+        return float("nan")
+    if len(term) == 1:
+        return _safe_num(term.iloc[0]["atm_iv"])
+
+    dtes = term["dte"].astype(float).to_numpy()
+    ivs = term["atm_iv"].astype(float).to_numpy()
+    if target_dte <= dtes.min() or target_dte >= dtes.max():
+        nearest_idx = int(np.argmin(np.abs(dtes - target_dte)))
+        return float(ivs[nearest_idx])
+    return float(np.interp(float(target_dte), dtes, ivs))
+
+
+def _select_expiry_near_dte(df_opt: pd.DataFrame, target_dte: int = 30) -> tuple[str | None, float]:
+    if df_opt.empty:
+        return None, float("nan")
+    expiries = df_opt[["expiry", "dte"]].dropna().drop_duplicates().copy()
+    if expiries.empty:
+        return None, float("nan")
+    expiries["dte_gap"] = (expiries["dte"].astype(float) - target_dte).abs()
+    row = expiries.sort_values(["dte_gap", "dte", "expiry"]).iloc[0]
+    return str(row["expiry"]), _safe_num(row["dte"])
+
+
 def _build_price_figure(df: pd.DataFrame) -> go.Figure:
     view = df.tail(120).copy()
     fig = go.Figure()
+    band_styles = [
+        (3, "#fecaca", "#bfdbfe", 0.85, "dot"),
+        (2, "#fca5a5", "#93c5fd", 1.0, "dash"),
+        (1, "#dc2626", "#2563eb", 1.25, "solid"),
+    ]
+    for sigma, up_color, down_color, width, dash in band_styles:
+        fig.add_trace(
+            go.Scatter(
+                x=view.index,
+                y=view[f"MA120_P{sigma}"],
+                mode="lines",
+                name=f"+{sigma}σ",
+                line=dict(color=up_color, width=width, dash=dash),
+                opacity=0.95,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=view.index,
+                y=view[f"MA120_M{sigma}"],
+                mode="lines",
+                name=f"-{sigma}σ",
+                line=dict(color=down_color, width=width, dash=dash),
+                opacity=0.95,
+            )
+        )
     fig.add_trace(
-        go.Scatter(x=view.index, y=view["Close"], mode="lines", name="QQQ Close", line=dict(color="#111827", width=2))
-    )
-    fig.add_trace(
-        go.Scatter(x=view.index, y=view["MA20"], mode="lines", name="MA20", line=dict(color="#2563EB", width=1.5))
-    )
-    fig.add_trace(
-        go.Scatter(x=view.index, y=view["MA50"], mode="lines", name="MA50", line=dict(color="#DC2626", width=1.5))
+        go.Scatter(
+            x=view.index,
+            y=view["MA120"],
+            mode="lines",
+            name="120D Mean",
+            line=dict(color="#16a34a", width=1.1),
+            opacity=0.9,
+        )
     )
     fig.add_trace(
         go.Scatter(
             x=view.index,
-            y=view["MA200"],
+            y=view["Close"],
             mode="lines",
-            name="MA200",
-            line=dict(color="#059669", width=1.7, dash="dot"),
+            name=f"{UNDERLYING_LABEL} Close",
+            line=dict(color="#0f172a", width=2.6),
         )
     )
+    price_min = _safe_num(view["Close"].min())
+    price_max = _safe_num(view["Close"].max())
+    yaxis_range = None
+    if not np.isnan(price_min) and not np.isnan(price_max) and price_max > price_min:
+        pad = (price_max - price_min) * 0.08
+        yaxis_range = [price_min - pad, price_max + pad]
     fig.update_layout(
-        title="QQQ 가격 추이 (최근 120거래일)",
+        title=f"{UNDERLYING_LABEL} 가격과 120일 Z-Score 밴드 (최근 120거래일)",
         xaxis_title="Date",
-        yaxis_title="Price (USD)",
+        yaxis_title="Index Level",
         template="plotly_white",
         height=420,
         legend=dict(orientation="h", y=1.1),
         margin=dict(l=40, r=20, t=60, b=40),
     )
+    if yaxis_range is not None:
+        fig.update_yaxes(range=yaxis_range)
     return fig
 
 
-def _build_volume_figure(df: pd.DataFrame) -> go.Figure:
+def _build_traded_value_figure(df: pd.DataFrame) -> go.Figure:
     view = df.tail(120).copy()
+    traded_value_t = view["Traded_Value"] / 1e12
+    avg_traded_value_t = view["Avg_Traded_Value"] / 1e12
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=view.index,
-            y=view["Volume"],
-            name="Volume",
+            y=traded_value_t,
+            name="거래액",
             marker_color="#d1d5db",
             opacity=0.65,
+            hovertemplate="%{x|%Y-%m-%d}<br>거래액=%{y:,.2f}조<extra></extra>",
         )
     )
     fig.add_trace(
         go.Scatter(
             x=view.index,
-            y=view["Avg_Vol"],
+            y=avg_traded_value_t,
             mode="lines",
-            name="20D Avg Volume",
+            name="20D Avg 거래액",
             line=dict(color="#2563EB", width=2),
+            hovertemplate="%{x|%Y-%m-%d}<br>20D 평균=%{y:,.2f}조<extra></extra>",
         )
     )
     fig.update_layout(
-        title="거래량 추이",
+        title="거래액 추이 (Close × Volume)",
         xaxis_title="Date",
-        yaxis_title="Volume",
+        yaxis_title="거래액 (조 단위)",
         template="plotly_white",
         height=340,
         margin=dict(l=40, r=20, t=60, b=40),
@@ -565,42 +786,89 @@ def _build_volume_figure(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _build_macd_figure(df: pd.DataFrame) -> go.Figure:
+def _build_zscore_oscillator_figure(df: pd.DataFrame) -> go.Figure:
     view = df.tail(120).copy()
-    colors = np.where(view["MACD_HIST"] >= 0, "#ef4444", "#3b82f6")
-
+    z = view["ZSCORE120"]
     fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=view.index,
-            y=view["MACD_HIST"],
-            name="MACD Hist",
-            marker_color=colors,
-            opacity=0.7,
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=view.index,
-            y=view["MACD"],
-            mode="lines",
-            name="MACD",
-            line=dict(color="#1d4ed8", width=2),
-        )
-    )
+    z_min = _safe_num(z.min())
+    z_max = _safe_num(z.max())
+    y_min = min(-3.5, z_min - 0.4 if not np.isnan(z_min) else -3.5)
+    y_max = max(3.5, z_max + 0.4 if not np.isnan(z_max) else 3.5)
+    fig.add_hrect(y0=2, y1=3, fillcolor="#dc2626", opacity=0.08, line_width=0)
+    fig.add_hrect(y0=3, y1=y_max, fillcolor="#dc2626", opacity=0.14, line_width=0)
+    fig.add_hrect(y0=-3, y1=-2, fillcolor="#2563eb", opacity=0.08, line_width=0)
+    fig.add_hrect(y0=y_min, y1=-3, fillcolor="#2563eb", opacity=0.14, line_width=0)
     fig.add_trace(
         go.Scatter(
             x=view.index,
-            y=view["MACD_SIGNAL"],
+            y=z,
             mode="lines",
-            name="Signal",
-            line=dict(color="#f59e0b", width=1.5),
+            name="120D Z-Score",
+            line=dict(color="#111827", width=2),
+            hovertemplate="%{x|%Y-%m-%d}<br>Z-Score=%{y:.2f}σ<extra></extra>",
+        )
+    )
+    for level, color, label, dash in [
+        (3, "#dc2626", "+3σ 초과열", "solid"),
+        (2, "#f87171", "+2σ 과열", "dash"),
+        (0, "#94a3b8", "중심선", "dot"),
+        (-2, "#60a5fa", "-2σ 과매도", "dash"),
+        (-3, "#2563eb", "-3σ 초과매도", "solid"),
+    ]:
+        fig.add_trace(
+            go.Scatter(
+                x=[view.index.min(), view.index.max()],
+                y=[level, level],
+                mode="lines",
+                name=label,
+                line=dict(color=color, width=1, dash=dash),
+                hoverinfo="skip",
+            )
+        )
+    fig.update_layout(
+        title="120일 평균 대비 Z-Score 오실레이터",
+        xaxis_title="Date",
+        yaxis_title="Z-Score (σ)",
+        template="plotly_white",
+        height=340,
+        yaxis=dict(range=[y_min, y_max], zeroline=False),
+        margin=dict(l=40, r=20, t=60, b=40),
+    )
+    return fig
+
+
+def _build_vx_proxy_momentum_figure(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if df.empty or "VX_PROXY_MOMENTUM" not in df.columns:
+        fig.update_layout(
+            title="VX 곡선 모멘텀 프록시: ((VIXY/VIXM) - 1) × -100 (데이터 없음)",
+            template="plotly_white",
+            height=340,
+            margin=dict(l=40, r=20, t=60, b=40),
+        )
+        return fig
+
+    view = df.tail(120).copy()
+    fig.add_trace(
+        go.Scatter(
+            x=view.index,
+            y=view["VX_PROXY_MOMENTUM"],
+            mode="lines",
+            name="VIXY/VIXM Proxy",
+            line=dict(color="#0f172a", width=2),
+            customdata=np.stack([view["VIXY"], view["VIXM"], view["VIXY_DIV_VIXM"]], axis=-1),
+            hovertemplate=(
+                "%{x|%Y-%m-%d}<br>Proxy Momentum=%{y:.2f}"
+                "<br>VIXY=%{customdata[0]:.2f}"
+                "<br>VIXM=%{customdata[1]:.2f}"
+                "<br>VIXY/VIXM=%{customdata[2]:.4f}<extra></extra>"
+            ),
         )
     )
     fig.update_layout(
-        title="MACD",
+        title="VX 곡선 모멘텀 프록시: ((VIXY/VIXM) - 1) × -100",
         xaxis_title="Date",
-        yaxis_title="MACD",
+        yaxis_title="Proxy Momentum",
         template="plotly_white",
         height=340,
         margin=dict(l=40, r=20, t=60, b=40),
@@ -608,8 +876,8 @@ def _build_macd_figure(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _build_oi_figure(df_opt: pd.DataFrame, nearest_expiry: str) -> go.Figure:
-    near = df_opt[df_opt["expiry"] == nearest_expiry].copy()
+def _build_oi_figure(df_opt: pd.DataFrame, expiry: str) -> go.Figure:
+    near = df_opt[df_opt["expiry"] == expiry].copy()
     call = near[near["type"] == "call"].groupby("strike", as_index=False)["openInterest"].sum()
     put = near[near["type"] == "put"].groupby("strike", as_index=False)["openInterest"].sum()
 
@@ -618,7 +886,7 @@ def _build_oi_figure(df_opt: pd.DataFrame, nearest_expiry: str) -> go.Figure:
         go.Bar(
             x=call["strike"],
             y=call["openInterest"],
-            name=f"Call OI ({nearest_expiry})",
+            name=f"Call OI ({expiry})",
             marker_color="#2563EB",
             opacity=0.75,
         )
@@ -627,14 +895,14 @@ def _build_oi_figure(df_opt: pd.DataFrame, nearest_expiry: str) -> go.Figure:
         go.Bar(
             x=put["strike"],
             y=put["openInterest"],
-            name=f"Put OI ({nearest_expiry})",
+            name=f"Put OI ({expiry})",
             marker_color="#DC2626",
             opacity=0.65,
         )
     )
     fig.update_layout(
         barmode="overlay",
-        title=f"최근 만기 OI 분포 ({nearest_expiry})",
+        title=f"30D 근접 만기 OI 분포 ({expiry})",
         xaxis_title="Strike",
         yaxis_title="Open Interest",
         template="plotly_white",
@@ -669,62 +937,54 @@ def _build_term_structure_figure(term_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _build_surface_figure(df_opt: pd.DataFrame) -> go.Figure:
-    surf = df_opt[["strike", "dte", "impliedVolatility", "type"]].dropna().copy()
-    surf["iv_pct"] = surf["impliedVolatility"] * 100
-    surf = (
-        surf.groupby(["dte", "strike"], as_index=False)["iv_pct"]
-        .mean()
-        .sort_values(["dte", "strike"])
-        .reset_index(drop=True)
-    )
-
-    grid = surf.pivot(index="dte", columns="strike", values="iv_pct").sort_index().sort_index(axis=1)
-    # 시장 데이터는 결측이 흔하므로 strike 축, dte 축 순서로 보간해 표면을 만든다.
-    grid = grid.interpolate(axis=1, limit_direction="both")
-    grid = grid.interpolate(axis=0, limit_direction="both")
-    if grid.isna().values.any():
-        mean_iv = float(np.nanmean(grid.values))
-        if np.isnan(mean_iv):
-            mean_iv = float(np.nanmean(surf["iv_pct"].values))
-        grid = grid.fillna(mean_iv)
-
+def _build_skew_figure(df_opt: pd.DataFrame, spot: float, target_dte: int = 30) -> go.Figure:
+    expiry, dte = _select_expiry_near_dte(df_opt, target_dte)
     fig = go.Figure()
-    fig.add_trace(
-        go.Surface(
-            x=grid.columns.astype(float),
-            y=grid.index.astype(float),
-            z=grid.values,
-            colorscale="Viridis",
-            opacity=0.9,
-            colorbar=dict(title="IV(%)"),
-            contours=dict(z=dict(show=True, usecolormap=True, project_z=True)),
-            hovertemplate="Strike=%{x:.2f}<br>DTE=%{y}<br>IV=%{z:.2f}%<extra></extra>",
-            name="IV Surface",
+    if expiry is None or np.isnan(dte):
+        fig.update_layout(
+            title="30D 변동성 스큐 (데이터 없음)",
+            template="plotly_white",
+            height=420,
+            margin=dict(l=40, r=20, t=60, b=40),
         )
-    )
-    fig.add_trace(
-        go.Scatter3d(
-            x=surf["strike"],
-            y=surf["dte"],
-            z=surf["iv_pct"],
-            mode="markers",
-            marker=dict(size=2.5, color="#111827", opacity=0.45),
-            hovertemplate="Raw Point<br>Strike=%{x:.2f}<br>DTE=%{y}<br>IV=%{z:.2f}%<extra></extra>",
-            name="Raw IV Points",
+        return fig
+
+    skew = df_opt[df_opt["expiry"] == expiry].dropna(subset=["strike", "impliedVolatility"]).copy()
+    skew["moneyness_pct"] = (skew["strike"] / (spot + 1e-9) - 1.0) * 100.0
+    skew["iv_pct"] = skew["impliedVolatility"] * 100.0
+    skew = skew[skew["moneyness_pct"].between(-12.0, 12.0)].sort_values(["type", "moneyness_pct"])
+
+    for opt_type, color, name in [("put", "#2563eb", "Put IV"), ("call", "#dc2626", "Call IV")]:
+        part = skew[skew["type"] == opt_type].copy()
+        if part.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=part["moneyness_pct"],
+                y=part["iv_pct"],
+                mode="lines+markers",
+                name=f"{name} ({expiry})",
+                line=dict(color=color, width=2),
+                marker=dict(size=5, opacity=0.75),
+                customdata=np.stack([part["strike"], part["openInterest"].fillna(0), part["volume"].fillna(0)], axis=-1),
+                hovertemplate=(
+                    "Moneyness=%{x:.2f}%<br>IV=%{y:.2f}%"
+                    "<br>Strike=%{customdata[0]:,.0f}"
+                    "<br>OI=%{customdata[1]:,.0f}"
+                    "<br>Volume=%{customdata[2]:,.0f}<extra></extra>"
+                ),
+            )
         )
-    )
+
+    fig.add_vline(x=0, line_color="#64748b", line_width=1, line_dash="dot")
     fig.update_layout(
-        title="QQQ IV Surface (3D Surface)",
-        scene=dict(
-            xaxis_title="Strike",
-            yaxis_title="DTE",
-            zaxis_title="IV (%)",
-            bgcolor="#F8FAFC",
-        ),
+        title=f"{UNDERLYING_LABEL} 30D 변동성 스큐 ({expiry}, DTE {int(dte)})",
+        xaxis_title="Moneyness vs Spot (%)",
+        yaxis_title="Implied Volatility (%)",
         template="plotly_white",
-        height=520,
-        margin=dict(l=0, r=0, t=60, b=0),
+        height=420,
+        legend=dict(orientation="h", y=1.12),
+        margin=dict(l=40, r=20, t=60, b=40),
     )
     return fig
 
@@ -798,38 +1058,35 @@ def _build_data_interpretation_paragraphs(
     ret_1d = _safe_num(curr.get("RET_1D"))
     ret_5d = _safe_num(curr.get("RET_5D"))
     ret_1m = _safe_num(curr.get("RET_1M"))
-    rsi = _safe_num(curr.get("RSI"))
-    rv20 = _safe_num(curr.get("RV20"))
+    volatility = _safe_num(curr.get("Volatility"))
     atr14 = _safe_num(curr.get("ATR14"))
-    ma20 = _safe_num(curr.get("MA20"))
-    ma50 = _safe_num(curr.get("MA50"))
-    ma200 = _safe_num(curr.get("MA200"))
+    ma120 = _safe_num(curr.get("MA120"))
+    zscore = _safe_num(curr.get("ZSCORE120"))
+    ma120_gap = _safe_num(curr.get("MA120_GAP"))
 
-    ma20_gap = _level_gap_pct(close, ma20)
-    ma50_gap = _level_gap_pct(close, ma50)
-    ma200_gap = _level_gap_pct(close, ma200)
     avwap_gap = _level_gap_pct(close, avwap_now)
     poc_gap = _level_gap_pct(close, poc_price)
     max_pain_gap = _level_gap_pct(close, max_pain)
+    z_state = _zscore_state(zscore)
 
-    if np.isnan(rsi):
-        rsi_tone = "모멘텀 판정은 중립으로 유보하는 편이 좋습니다."
-    elif rsi >= 60:
-        rsi_tone = "RSI가 60 이상으로 올라와 단기 모멘텀은 상방 쪽이 조금 더 우세합니다."
-    elif rsi <= 40:
-        rsi_tone = "RSI가 40 아래로 밀려 단기 체력은 아직 완전히 회복되지 않았습니다."
+    if np.isnan(zscore):
+        zscore_tone = "Z-Score 기반 모멘텀 판정은 중립으로 유보하는 편이 좋습니다."
+    elif abs(zscore) >= 3:
+        zscore_tone = "Z-Score가 3σ 밖에 있어 추격보다 되돌림 리스크 관리가 중요한 구간입니다."
+    elif abs(zscore) >= 2:
+        zscore_tone = "Z-Score가 2σ 밖에 있어 단기 과열/과매도 구간 진입을 의식해야 합니다."
     else:
-        rsi_tone = "RSI가 중립권에 있어 추세 추종보다 레벨 대응이 더 중요한 구간입니다."
+        zscore_tone = "Z-Score가 2σ 안쪽이면 극단 구간보다는 레벨 대응이 더 중요한 상태입니다."
 
     paragraph_1 = (
-        f"QQQ는 현재 {_fmt_price(close)}로 1일 {_fmt_pct(ret_1d)}, 5일 {_fmt_pct(ret_5d)}, "
-        f"1개월 {_fmt_pct(ret_1m)} 흐름을 보이고 있습니다. 가격은 20일선 대비 {_fmt_pct(ma20_gap)}, "
-        f"50일선 대비 {_fmt_pct(ma50_gap)}, 200일선 대비 {_fmt_pct(ma200_gap)} 위치에 있어 "
-        f"장기적으로는 {trend_info['long_trend']} 레짐을 유지하면서도 단기적으로는 "
-        f"{trend_info['short_trend']} 성격이 섞여 있는 상태입니다. "
-        f"{rsi_tone} "
+        f"{UNDERLYING_LABEL}는 현재 {_fmt_price(close)}로 1일 {_fmt_pct(ret_1d)}, 5일 {_fmt_pct(ret_5d)}, "
+        f"1개월 {_fmt_pct(ret_1m)} 흐름을 보이고 있습니다. 가격은 120일 평균선({_fmt_price(ma120)}) 대비 "
+        f"{_fmt_pct(ma120_gap)} 위치에 있고, 120일 평균 대비 Z-Score는 {_fmt_sigma(zscore)}로 "
+        f"{z_state} 구간입니다. "
+        f"{zscore_tone} "
         f"또한 AVWAP 대비 {_fmt_pct(avwap_gap)}, POC 대비 {_fmt_pct(poc_gap)} 수준이라는 점은 "
-        "지금 가격대가 단순한 이탈 구간이 아니라 실제 거래가 누적된 밀집 구간 위에서 움직이고 있음을 뜻합니다."
+        "지금 가격대가 단순한 이탈 구간이 아니라 실제 거래가 누적된 밀집 구간 위에서 움직이고 있음을 뜻합니다. "
+        f"포트폴리오 통계식 기준 20일 Volatility는 {_fmt_pct(volatility)}입니다."
     )
 
     top_strikes = [f"{float(v):.0f}" for v in oi_total["strike"].tolist()[:4]]
@@ -860,14 +1117,15 @@ def _build_data_interpretation_paragraphs(
 
     paragraph_2 = (
         f"옵션 포지셔닝에서는 OI 기준 Put/Call 비율이 {_fmt_ratio(pcr_oi)}, 거래량 기준이 {_fmt_ratio(pcr_vol)}로 집계됐습니다. "
-        f"{hedge_text} OI가 많이 쌓인 스트라이크는 {strike_text}달러 부근이며, 이는 단기적으로 "
+        f"{hedge_text} OI가 많이 쌓인 스트라이크는 {strike_text}포인트 부근이며, 이는 단기적으로 "
         "호가가 자주 붙고 이탈 시 감마 반응이 커질 수 있는 가격대라는 뜻입니다. "
         f"{max_pain_text}"
     )
 
     short_iv = _safe_num(term_df.iloc[0]["atm_iv"]) if not term_df.empty else float("nan")
     long_iv = _safe_num(term_df.iloc[-1]["atm_iv"]) if not term_df.empty else float("nan")
-    iv_rv_gap = float("nan") if np.isnan(short_iv) or np.isnan(rv20) else short_iv - rv20
+    target_iv_30d = _compute_target_atm_iv(term_df, 30)
+    iv_rv_gap = float("nan") if np.isnan(target_iv_30d) or np.isnan(volatility) else target_iv_30d - volatility
 
     if np.isnan(short_iv) or np.isnan(long_iv):
         iv_shape_text = "ATM IV 만기 구조를 충분히 읽기 어려워 변동성 해석은 보수적으로 접근해야 합니다."
@@ -888,15 +1146,15 @@ def _build_data_interpretation_paragraphs(
         iv_rv_text = "실현변동성과 옵션 프리미엄의 상대 가격 비교는 제한적입니다."
     elif iv_rv_gap > 4.0:
         iv_rv_text = (
-            f"근월 IV가 최근 20일 실현변동성 {rv20:.2f}%보다 높아, 단기 옵션 프리미엄은 다소 비싸게 거래되고 있습니다."
+            f"30D IV가 최근 20일 Volatility {volatility:.2f}%보다 높아, 한 달 구간 옵션 프리미엄은 다소 비싸게 거래되고 있습니다."
         )
     elif iv_rv_gap < -2.0:
         iv_rv_text = (
-            f"근월 IV가 최근 20일 실현변동성 {rv20:.2f}%보다 낮아, 옵션 프리미엄이 상대적으로 눌려 있는 편입니다."
+            f"30D IV가 최근 20일 Volatility {volatility:.2f}%보다 낮아, 한 달 구간 옵션 프리미엄이 상대적으로 눌려 있는 편입니다."
         )
     else:
         iv_rv_text = (
-            f"근월 IV와 최근 20일 실현변동성({rv20:.2f}%) 사이 괴리가 크지 않아, 옵션 가격은 최근 실제 변동을 대체로 무난하게 반영하고 있습니다."
+            f"30D IV({target_iv_30d:.2f}%)와 최근 20일 Volatility({volatility:.2f}%) 사이 괴리가 크지 않아, 옵션 가격은 최근 실제 변동을 대체로 무난하게 반영하고 있습니다."
         )
 
     paragraph_3 = (
@@ -911,9 +1169,9 @@ def _build_data_interpretation_paragraphs(
         yield_corr = _safe_num(macro_stats.get("yield_corr"))
         rs_slope = _safe_num(macro_stats.get("rs_slope_20d"))
         macro_paragraph = (
-            f"거시 배경에서는 VIX가 {vix_curr:.2f}로 {macro_stats.get('vix_status')} 국면에 있고, "
-            f"달러와의 60일 상관은 {dxy_corr:.2f}, 10년물 금리와의 60일 상관은 {yield_corr:.2f}입니다. "
-            f"QQQ/SPY 상대강도 변화가 {rs_slope:.2f}%라는 점은 나스닥이 광범위 시장 대비 어느 정도 주도력을 유지하고 있는지 보여줍니다. "
+            f"거시 배경에서는 VIX가 {_fmt_ratio(vix_curr)}로 {macro_stats.get('vix_status')} 국면에 있고, "
+            f"달러와의 60일 상관은 {_fmt_ratio(dxy_corr)}, 10년물 금리와의 60일 상관은 {_fmt_ratio(yield_corr)}입니다. "
+            f"{UNDERLYING_LABEL}/SPY 상대강도 변화가 {_fmt_pct(rs_slope)}라는 점은 나스닥 100 원지수가 광범위 시장 대비 어느 정도 주도력을 유지하고 있는지 보여줍니다. "
             f"여기에 내부 수급은 {smc_result['order_flow']}로 읽히고 AMD 국면 판정은 {smc_result['amd_phase']}이므로, "
             "현재 구간은 방향성 확신 하나로 밀어붙이기보다 가격 레벨과 옵션 수급이 만나는 지점을 따라가는 전략이 더 적합합니다."
         )
@@ -939,35 +1197,32 @@ def _chart_fallback_html(title: str) -> str:
 
 
 def _build_trend_summary(curr: pd.Series, p1d: pd.Series, p1m: pd.Series, df_all: pd.DataFrame) -> dict[str, object]:
-    ma200 = _safe_num(curr.get("MA200"))
-    ma20 = _safe_num(curr.get("MA20"))
-    ma50 = _safe_num(curr.get("MA50"))
-    p1d_ma20 = _safe_num(p1d.get("MA20"))
-    p1d_ma50 = _safe_num(p1d.get("MA50"))
-    p1m_ma200 = _safe_num(p1m.get("MA200"))
+    close = _safe_num(curr.get("Close"))
+    ma120 = _safe_num(curr.get("MA120"))
+    p1m_ma120 = _safe_num(p1m.get("MA120"))
+    zscore = _safe_num(curr.get("ZSCORE120"))
+    supertrend_value = _safe_num(curr.get("SUPERTREND_10_3"))
+    supertrend_dir = str(curr.get("SUPERTREND_10_3_DIR", "UNKNOWN"))
+    supertrend_gap = _level_gap_pct(close, supertrend_value)
 
-    long_trend = "BULL" if not np.isnan(ma200) and _safe_num(curr.get("Close")) > ma200 else "BEAR"
-    short_trend = "BULL" if not np.isnan(ma20) and not np.isnan(ma50) and ma20 > ma50 else "BEAR"
-    divergence = _check_divergence(df_all)
-    ma200_slope = (
-        (_safe_num(curr.get("MA200")) / (p1m_ma200 + 1e-9) - 1) * 100
-        if not np.isnan(ma200) and not np.isnan(p1m_ma200)
+    long_trend = "BULL" if not np.isnan(ma120) and close > ma120 else "BEAR"
+    short_trend = _zscore_state(zscore)
+    divergence = _check_zscore_divergence(df_all)
+    ma120_slope = (
+        (ma120 / (p1m_ma120 + 1e-9) - 1) * 100
+        if not np.isnan(ma120) and not np.isnan(p1m_ma120)
         else float("nan")
     )
-
-    cross = None
-    if not np.isnan(p1d_ma20) and not np.isnan(p1d_ma50) and not np.isnan(ma20) and not np.isnan(ma50):
-        if p1d_ma20 < p1d_ma50 and ma20 >= ma50:
-            cross = "GOLDEN CROSS"
-        elif p1d_ma20 > p1d_ma50 and ma20 <= ma50:
-            cross = "DEATH CROSS"
 
     return {
         "long_trend": long_trend,
         "short_trend": short_trend,
         "divergence": divergence,
-        "ma200_slope": ma200_slope,
-        "cross": cross,
+        "ma120_slope": ma120_slope,
+        "zscore": zscore,
+        "supertrend_dir": supertrend_dir,
+        "supertrend_value": supertrend_value,
+        "supertrend_gap": supertrend_gap,
     }
 
 
@@ -975,6 +1230,8 @@ def _render_html(
     as_of: dt.datetime,
     out_path: Path,
     price_df: pd.DataFrame,
+    vftw_snapshot_df: pd.DataFrame,
+    vx_proxy_momentum_df: pd.DataFrame,
     opt_df: pd.DataFrame,
     expiries: list[str],
     spot: float,
@@ -994,6 +1251,11 @@ def _render_html(
     )
     max_pain = _compute_max_pain(opt_df)
     term_df = _compute_term_structure(opt_df, spot)
+    target_iv_30d = _compute_target_atm_iv(term_df, 30)
+    iv_rv_spread = target_iv_30d - _safe_num(curr.get("Volatility"))
+    oi_expiry, oi_dte = _select_expiry_near_dte(opt_df, 30)
+    if oi_expiry is None:
+        oi_expiry = expiries[0]
     smc_result = _analyze_smc_amd_flow(price_df)
     macro_stats = _analyze_macro(price_df)
     trend_info = _build_trend_summary(curr, p1d, p1m, price_df)
@@ -1011,26 +1273,29 @@ def _render_html(
 
     if HAS_PLOTLY:
         fig_price = _build_price_figure(price_df)
-        fig_volume = _build_volume_figure(price_df)
-        fig_macd = _build_macd_figure(price_df)
-        fig_oi = _build_oi_figure(opt_df, expiries[0])
+        fig_traded_value = _build_traded_value_figure(price_df)
+        fig_zscore = _build_zscore_oscillator_figure(price_df)
+        fig_vx_proxy_momentum = _build_vx_proxy_momentum_figure(vx_proxy_momentum_df)
+        fig_oi = _build_oi_figure(opt_df, oi_expiry)
         fig_term = _build_term_structure_figure(
             term_df if not term_df.empty else pd.DataFrame({"dte": [], "atm_iv": [], "expiry": []})
         )
-        fig_surface = _build_surface_figure(opt_df)
+        fig_skew = _build_skew_figure(opt_df, spot, 30)
         price_div = plotly_to_html(fig_price, include_plotlyjs="cdn", full_html=False)
-        volume_div = plotly_to_html(fig_volume, include_plotlyjs=False, full_html=False)
-        macd_div = plotly_to_html(fig_macd, include_plotlyjs=False, full_html=False)
+        traded_value_div = plotly_to_html(fig_traded_value, include_plotlyjs=False, full_html=False)
+        zscore_div = plotly_to_html(fig_zscore, include_plotlyjs=False, full_html=False)
+        vx_proxy_momentum_div = plotly_to_html(fig_vx_proxy_momentum, include_plotlyjs=False, full_html=False)
         oi_div = plotly_to_html(fig_oi, include_plotlyjs=False, full_html=False)
         term_div = plotly_to_html(fig_term, include_plotlyjs=False, full_html=False)
-        surface_div = plotly_to_html(fig_surface, include_plotlyjs=False, full_html=False)
+        skew_div = plotly_to_html(fig_skew, include_plotlyjs=False, full_html=False)
     else:
-        price_div = _chart_fallback_html("QQQ 가격 추이")
-        volume_div = _chart_fallback_html("거래량 추이")
-        macd_div = _chart_fallback_html("MACD")
-        oi_div = _chart_fallback_html("최근 만기 OI 분포")
+        price_div = _chart_fallback_html(f"{UNDERLYING_LABEL} 가격 추이")
+        traded_value_div = _chart_fallback_html("거래액 추이")
+        zscore_div = _chart_fallback_html("120일 Z-Score 오실레이터")
+        vx_proxy_momentum_div = _chart_fallback_html("VX 곡선 모멘텀 프록시")
+        oi_div = _chart_fallback_html("30D 근접 만기 OI 분포")
         term_div = _chart_fallback_html("ATM IV 만기 구조")
-        surface_div = _chart_fallback_html("QQQ IV Surface (3D Surface)")
+        skew_div = _chart_fallback_html(f"{UNDERLYING_LABEL} 30D 변동성 스큐")
 
     conclusion_lines = _build_conclusion(
         spot=spot,
@@ -1072,10 +1337,17 @@ def _render_html(
     def _fmt_metric(value: float) -> str:
         return "N/A" if np.isnan(value) else f"{value:,.2f}"
 
+    def _traded_value_t(row: pd.Series) -> float:
+        value = _safe_num(row.get("Traded_Value"))
+        return float("nan") if np.isnan(value) else value / 1e12
+
     indicator_metrics = [
-        ("RSI (강도)", _v(curr, "RSI"), _v(p1d, "RSI"), _v(p1w, "RSI"), _v(p1m, "RSI")),
+        ("120D Z-Score (σ)", _v(curr, "ZSCORE120"), _v(p1d, "ZSCORE120"), _v(p1w, "ZSCORE120"), _v(p1m, "ZSCORE120")),
         ("AVWAP 괴리율 (%)", _avwap_gap(curr), _avwap_gap(p1d), _avwap_gap(p1w), _avwap_gap(p1m)),
-        ("BB 폭 (변동성)", _v(curr, "BB_Width"), _v(p1d, "BB_Width"), _v(p1w, "BB_Width"), _v(p1m, "BB_Width")),
+        ("Volatility (%)", _v(curr, "Volatility"), _v(p1d, "Volatility"), _v(p1w, "Volatility"), _v(p1m, "Volatility")),
+        ("30D IV (%)", target_iv_30d, float("nan"), float("nan"), float("nan")),
+        ("IV-RV Spread (%)", iv_rv_spread, float("nan"), float("nan"), float("nan")),
+        ("거래액 (조)", _traded_value_t(curr), _traded_value_t(p1d), _traded_value_t(p1w), _traded_value_t(p1m)),
         ("20일 수익률 (%)", _v(curr, "Rolling_Ret"), _v(p1d, "Rolling_Ret"), _v(p1w, "Rolling_Ret"), _v(p1m, "Rolling_Ret")),
         ("ATR (변동범위)", _v(curr, "ATR14"), _v(p1d, "ATR14"), _v(p1w, "ATR14"), _v(p1m, "ATR14")),
     ]
@@ -1098,17 +1370,45 @@ def _render_html(
         else "리스크 관리/현금 확보"
     )
     score_tone = "#16a34a" if composite_score > 70 else "#ca8a04" if composite_score > 50 else "#dc2626"
-    ma200_slope = _safe_num(trend_info.get("ma200_slope"))
+    ma120_slope = _safe_num(trend_info.get("ma120_slope"))
+    zscore_now = _safe_num(trend_info.get("zscore"))
+    supertrend_dir = str(trend_info.get("supertrend_dir", "UNKNOWN"))
+    supertrend_value = _safe_num(trend_info.get("supertrend_value"))
+    supertrend_gap = _safe_num(trend_info.get("supertrend_gap"))
     avwap_now = _safe_num(curr.get("AVWAP"))
+    vftw_latest = (
+        vftw_snapshot_df.dropna(subset=["VFTW_HAPPINESS"]).iloc[-1]
+        if not vftw_snapshot_df.empty and "VFTW_HAPPINESS" in vftw_snapshot_df.columns and not vftw_snapshot_df.dropna(subset=["VFTW_HAPPINESS"]).empty
+        else pd.Series(dtype="float64")
+    )
+    proxy_latest = (
+        vx_proxy_momentum_df.dropna(subset=["VX_PROXY_MOMENTUM"]).iloc[-1]
+        if not vx_proxy_momentum_df.empty and "VX_PROXY_MOMENTUM" in vx_proxy_momentum_df.columns and not vx_proxy_momentum_df.dropna(subset=["VX_PROXY_MOMENTUM"]).empty
+        else pd.Series(dtype="float64")
+    )
+    vftw_happiness_now = _safe_num(vftw_latest.get("VFTW_HAPPINESS"))
+    vx1_now = _safe_num(vftw_latest.get("VX1"))
+    vx2_now = _safe_num(vftw_latest.get("VX2"))
+    proxy_momentum_now = _safe_num(proxy_latest.get("VX_PROXY_MOMENTUM"))
+    vixy_now = _safe_num(proxy_latest.get("VIXY"))
+    vixm_now = _safe_num(proxy_latest.get("VIXM"))
 
     report_lines: list[str] = [
         f"종합 점수: {composite_score:.1f}/100 | 현재 권장 포지션: [{status_text}]",
-        f"추세 분석: 장기({trend_info['long_trend']}) / 단기({trend_info['short_trend']}) | MA200 기울기(1M): {_fmt_pct(ma200_slope)}",
+        f"120일 기준 추세: {trend_info['long_trend']} | Z-Score={_fmt_sigma(zscore_now)} ({trend_info['short_trend']}) | MA120 기울기(1M): {_fmt_pct(ma120_slope)}",
         f"수급 분석: Order Flow={smc_result['order_flow']} | AMD 국면={smc_result['amd_phase']}",
-        f"모멘텀 점검: RSI 다이버전스 = {trend_info['divergence']}",
+        f"모멘텀 점검: Z-Score 다이버전스 = {trend_info['divergence']} | Supertrend(10,3) = {supertrend_dir} ({_fmt_price(supertrend_value)}, 현재가 대비 {_fmt_pct(supertrend_gap)})",
     ]
-    if trend_info.get("cross"):
-        report_lines.append(f"이평선 크로스 감지: {trend_info['cross']}")
+    if not np.isnan(vftw_happiness_now):
+        report_lines.append(
+            f"VX 최신 스냅샷: ((VX1!/VX2!)-1)×-100 = {_fmt_delta(vftw_happiness_now)} | "
+            f"{VFTW1_SYMBOL}={_fmt_ratio(vx1_now)}, {VFTW2_SYMBOL}={_fmt_ratio(vx2_now)}"
+        )
+    if not np.isnan(proxy_momentum_now):
+        report_lines.append(
+            f"VX 라인 프록시: ((VIXY/VIXM)-1)×-100 = {_fmt_delta(proxy_momentum_now)} | "
+            f"VIXY={_fmt_ratio(vixy_now)}, VIXM={_fmt_ratio(vixm_now)}"
+        )
     if smc_result.get("sweep_low"):
         report_lines.append("유동성 Sweep Low 신호가 감지되어 단기 반등 시도를 체크할 구간입니다.")
     if smc_result.get("sweep_high"):
@@ -1116,18 +1416,18 @@ def _render_html(
     if not np.isnan(poc_price):
         report_lines.append(f"가격 방어선: POC(최대 매물대) = {_fmt_price(poc_price)}")
     if not np.isnan(avwap_now):
-        report_lines.append(f"기관 평균 단가 추정(AVWAP): {_fmt_price(avwap_now)}")
+        report_lines.append(f"거래량 가중 평균 레벨(AVWAP): {_fmt_price(avwap_now)}")
     if not np.isnan(max_pain):
         report_lines.append(f"옵션 집중 가격(Max Pain): {_fmt_price(max_pain)}")
     report_html = "".join([f"<li>{html.escape(line)}</li>" for line in report_lines])
 
     if macro_stats:
         macro_lines = [
-            f"달러 인덱스(DXY): {_safe_num(macro_stats['dollar_idx']):.2f} | QQQ 상관(60D): {_safe_num(macro_stats['dxy_corr']):.2f}",
-            f"미 10년물(^TNX): {_safe_num(macro_stats['yield_10y']):.2f}% | QQQ 상관(60D): {_safe_num(macro_stats['yield_corr']):.2f}",
-            f"반도체(SOXX) 동조화(60D): {_safe_num(macro_stats['soxx_corr']) * 100:.1f}%",
-            f"VIX 레짐: {_safe_num(macro_stats['vix_curr']):.2f} ({macro_stats['vix_status']})",
-            f"QQQ/SPY 상대강도 변화(20D): {_safe_num(macro_stats['rs_slope_20d']):.2f}%",
+            f"달러 인덱스(DXY): {_fmt_ratio(_safe_num(macro_stats['dollar_idx']))} | {UNDERLYING_LABEL} 상관(60D): {_fmt_ratio(_safe_num(macro_stats['dxy_corr']))}",
+            f"미 10년물(^TNX): {_fmt_pct(_safe_num(macro_stats['yield_10y']))} | {UNDERLYING_LABEL} 상관(60D): {_fmt_ratio(_safe_num(macro_stats['yield_corr']))}",
+            f"반도체(SOXX) 상관(60D): {_fmt_ratio(_safe_num(macro_stats['soxx_corr']))}",
+            f"VIX 레짐: {_fmt_ratio(_safe_num(macro_stats['vix_curr']))} ({macro_stats['vix_status']})",
+            f"{UNDERLYING_LABEL}/SPY 상대강도 변화(20D): {_fmt_pct(_safe_num(macro_stats['rs_slope_20d']))}",
         ]
     else:
         macro_lines = ["거시 보조 지표를 충분히 수집하지 못해 기술/옵션 신호 중심으로 해석했습니다."]
@@ -1165,7 +1465,7 @@ def _render_html(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>나스닥 옵션 분석 (QQQ)</title>
+  <title>나스닥 옵션 분석 ({UNDERLYING_LABEL})</title>
   <style>
     :root {{
       --bg: #f5f7fb;
@@ -1256,16 +1556,23 @@ def _render_html(
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>나스닥 옵션 분석 (QQQ)</h1>
+      <h1>나스닥 옵션 분석 ({UNDERLYING_LABEL})</h1>
       <p class="meta">as of (KST): {as_of.strftime("%Y-%m-%d %H:%M:%S")}</p>
       <p class="meta">데이터 상태: yfinance 기준 최근 체결/전일 종가 혼합 (지연 가능)</p>
       <p class="meta">IV 처리: {html.escape(iv_note)}</p>
       <p class="meta">파일: {html.escape(str(out_path))}</p>
       <div class="grid">
-        <div class="metric"><div class="label">QQQ 현재가</div><div class="value">{_fmt_price(_safe_num(curr.get("Close")))}</div></div>
+        <div class="metric"><div class="label">{UNDERLYING_LABEL} 현재가</div><div class="value">{_fmt_price(_safe_num(curr.get("Close")))}</div></div>
         <div class="metric"><div class="label">1D 변화율</div><div class="value">{_fmt_pct(_safe_num(curr.get("RET_1D")))}</div></div>
         <div class="metric"><div class="label">5D 변화율</div><div class="value">{_fmt_pct(_safe_num(curr.get("RET_5D")))}</div></div>
         <div class="metric"><div class="label">1M 변화율</div><div class="value">{_fmt_pct(_safe_num(curr.get("RET_1M")))}</div></div>
+        <div class="metric"><div class="label">120D Z-Score</div><div class="value">{_fmt_sigma(_safe_num(curr.get("ZSCORE120")))}</div></div>
+        <div class="metric"><div class="label">Volatility</div><div class="value">{_fmt_pct(_safe_num(curr.get("Volatility")))}</div></div>
+        <div class="metric"><div class="label">30D IV</div><div class="value">{_fmt_pct(target_iv_30d)}</div></div>
+        <div class="metric"><div class="label">IV-RV Spread</div><div class="value">{_fmt_pct(iv_rv_spread)}</div></div>
+        <div class="metric"><div class="label">VX Snapshot</div><div class="value">{_fmt_delta(vftw_happiness_now)}</div></div>
+        <div class="metric"><div class="label">VX Proxy</div><div class="value">{_fmt_delta(proxy_momentum_now)}</div></div>
+        <div class="metric"><div class="label">거래액</div><div class="value">{_fmt_price(_safe_num(curr.get("Traded_Value")) / 1e12)}조</div></div>
         <div class="metric"><div class="label">Put/Call (OI)</div><div class="value">{_fmt_ratio(float(pcr_oi))}</div></div>
         <div class="metric"><div class="label">Put/Call (Volume)</div><div class="value">{_fmt_ratio(float(pcr_vol))}</div></div>
         <div class="metric"><div class="label">Max Pain</div><div class="value">{_fmt_price(max_pain)}</div></div>
@@ -1278,22 +1585,23 @@ def _render_html(
     <section class="card">
       <h2>1. 시장 스냅샷</h2>
       {price_div}
-      {volume_div}
-      {macd_div}
+      {traded_value_div}
+      {zscore_div}
+      {vx_proxy_momentum_div}
     </section>
 
     <section class="card">
       <h2>2. 옵션체인 핵심</h2>
-      <h3>2.1 최근 만기 OI 분포</h3>
+      <h3>2.1 30D 근접 만기 OI 분포</h3>
       {oi_div}
       <h3>2.2 ATM IV 만기 구조</h3>
       {term_div}
-      <h3>2.3 3D IV Surface</h3>
-      {surface_div}
+      <h3>2.3 30D 변동성 스큐</h3>
+      {skew_div}
     </section>
 
     <section class="card">
-      <h2>3. QQQ 실시간 지표 요약</h2>
+      <h2>3. {UNDERLYING_LABEL} 실시간 지표 요약</h2>
       <table>
         <thead>
           <tr><th>Metric</th><th>Current</th><th>vs 1D</th><th>vs 1W</th><th>vs 1M</th></tr>
@@ -1340,9 +1648,9 @@ def _render_html(
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="QQQ 나스닥 옵션 분석 HTML 리포트 생성기")
+    p = argparse.ArgumentParser(description=f"{UNDERLYING_LABEL} 나스닥 옵션 분석 HTML 리포트 생성기")
     p.add_argument("--period", default="2y", help="가격 히스토리 기간 (기본: 2y)")
-    p.add_argument("--max-exp", type=int, default=5, help="수집할 옵션 만기 개수 (기본: 5)")
+    p.add_argument("--max-exp", type=int, default=20, help="수집할 옵션 만기 개수 (기본: 20, 30D 분석용)")
     p.add_argument(
         "--strike-band",
         type=float,
@@ -1359,16 +1667,20 @@ def main() -> int:
     as_of = _now_kst()
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    stem = f"nasdaq_option_analysis_qqq_{as_of.strftime('%Y%m%d_%H%M%S')}_kst"
+    stem = f"nasdaq_option_analysis_{REPORT_SLUG}_{as_of.strftime('%Y%m%d_%H%M%S')}_kst"
     out_path = outdir / f"{stem}.html"
 
     price_df = _prepare_price_data(args.period)
+    vftw_snapshot_df = _prepare_vftw_snapshot_data()
+    vx_proxy_momentum_df = _prepare_vx_proxy_momentum_data(args.period)
     opt_df, expiries, spot = _fetch_option_data(args.max_exp, args.strike_band)
 
     html_doc = _render_html(
         as_of=as_of,
         out_path=out_path,
         price_df=price_df,
+        vftw_snapshot_df=vftw_snapshot_df,
+        vx_proxy_momentum_df=vx_proxy_momentum_df,
         opt_df=opt_df,
         expiries=expiries,
         spot=spot,

@@ -85,7 +85,7 @@ def _completed(stdout_payload: dict | None, *, returncode: int = 0, stderr: str 
 
 
 class NewsUpdateHarnessTests(unittest.TestCase):
-    def test_fetch_article_with_harness_defaults_to_chrome_devtools(self) -> None:
+    def test_fetch_article_with_harness_defaults_to_chrome_visible(self) -> None:
         success = {
             "success": True,
             "url": "https://www.bloomberg.com/news/articles/example",
@@ -108,8 +108,30 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["harness_attempts"], 1)
         command = mock_run.call_args_list[0].args[0]
-        self.assertIn("scripts/safari_fetch.py", command[1])
-        self.assertIn("--browser", command)
+        self.assertIn("scripts/chrome_visible_fetch.py", command[1])
+        self.assertNotIn("--browser", command)
+        self.assertEqual(mock_run.call_args_list[0].kwargs["env"]["NEWS_UPDATE_SESSION_LOCK_HELD"], "1")
+
+    def test_fetch_article_with_harness_skips_when_newscollector_session_lock_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.dict(
+                 "os.environ",
+                 {"NEWS_UPDATE_SESSION_LOCK_PATH": str(Path(tmpdir) / "news_update.lock")},
+             ), \
+             harness.news_update_session_lock(reason="existing-session", lock_timeout=0), \
+             mock.patch("scripts.news_update_harness.subprocess.run") as mock_run:
+            result = harness.fetch_article_with_harness(
+                "https://www.bloomberg.com/news/articles/example",
+                session_lock_timeout=0,
+            )
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["skipped_by_session_lock"])
+        self.assertTrue(result["skipped_due_to_session_lock"])
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["harness_attempts"], 0)
+        self.assertEqual(mock_run.call_count, 0)
 
     def test_fetch_article_with_harness_can_keep_chrome_open(self) -> None:
         success = {
@@ -135,6 +157,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         command = mock_run.call_args_list[0].args[0]
+        self.assertIn("scripts/chrome_visible_fetch.py", command[1])
         self.assertIn("--no-close", command)
 
     def test_fetch_article_with_harness_falls_back_to_chrome_after_empty_firefox_capture(self) -> None:
@@ -149,7 +172,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         }
         chrome_diagnose = {
             "ready": True,
-            "browser": "chrome",
+            "browser": "chrome-visible",
             "attach": {"ok": True},
             "javascript": {"ok": True},
         }
@@ -191,8 +214,8 @@ class NewsUpdateHarnessTests(unittest.TestCase):
 
         self.assertIn("scripts/firefox_visible_fetch.py", first_command[1])
         self.assertIn("--diagnose", second_command)
-        self.assertIn("scripts/safari_fetch.py", third_command[1])
-        self.assertIn("--browser", third_command)
+        self.assertIn("scripts/chrome_visible_fetch.py", third_command[1])
+        self.assertNotIn("--browser", third_command)
 
     def test_fetch_article_with_harness_falls_back_to_chrome_after_firefox_launch_error(self) -> None:
         firefox_failure = {
@@ -210,7 +233,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         }
         chrome_diagnose = {
             "ready": True,
-            "browser": "chrome",
+            "browser": "chrome-visible",
             "attach": {"ok": True},
             "javascript": {"ok": True},
         }
@@ -246,7 +269,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         third_command = mock_run.call_args_list[2].args[0]
 
         self.assertIn("scripts/firefox_visible_fetch.py", first_command[1])
-        self.assertIn("scripts/safari_fetch.py", third_command[1])
+        self.assertIn("scripts/chrome_visible_fetch.py", third_command[1])
 
     def test_validate_article_content_accepts_rich_axiostyle_output(self) -> None:
         issues = harness.validate_article_content(
@@ -470,34 +493,17 @@ class NewsUpdateHarnessTests(unittest.TestCase):
 
         first_command = mock_run.call_args_list[0].args[0]
         second_command = mock_run.call_args_list[1].args[0]
-        self.assertIn("scripts/safari_fetch.py", first_command[1])
+        self.assertIn("scripts/chrome_visible_fetch.py", first_command[1])
         self.assertNotIn("--diagnose", first_command)
         self.assertIn("--diagnose", second_command)
 
-    def test_fetch_article_with_harness_attempts_visible_fallback_when_devtools_dependency_is_missing(self) -> None:
-        permission_failure = {
-            "success": False,
-            "url": "https://www.wsj.com/articles/example",
-            "title": "",
-            "text": "",
-            "html": "",
-            "error": "Python websockets 패키지가 설치되어 있지 않습니다. `python3 -m pip install websockets`로 설치한 뒤 다시 시도해 주세요.",
-            "paywall": False,
-        }
-
-        with mock.patch(
-            "scripts.news_update_harness.subprocess.run",
-            return_value=_completed(permission_failure),
-        ) as mock_run:
-            result = harness.fetch_article_with_harness(
+    def test_fetch_article_with_harness_rejects_devtools_browser_alias(self) -> None:
+        with self.assertRaisesRegex(ValueError, "DevTools 본문 수집은 비활성화"):
+            harness.fetch_article_with_harness(
                 "https://www.wsj.com/articles/example",
-                recovery_wait=0,
+                browser="devtools",
+                session_lock=False,
             )
-
-        self.assertFalse(result["success"])
-        self.assertEqual(result["harness_attempts"], 1)
-        self.assertEqual(mock_run.call_count, 3)
-        self.assertIn("browser_fallbacks", result)
 
     def test_fetch_article_with_harness_reports_subprocess_timeout(self) -> None:
         with mock.patch(
@@ -528,11 +534,11 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         ), mock.patch.object(
             harness,
             "_run_fetch_diagnose",
-            return_value={"ready": True, "browser": "chrome"},
+            return_value={"ready": True, "browser": "chrome-visible"},
         ), mock.patch.object(
             harness,
             "_run_browser_cleanup",
-            return_value={"ok": True, "browser": "chrome", "closed": True},
+            return_value={"ok": True, "browser": "chrome-visible", "closed": True},
         ):
             with mock.patch("sys.stdout", stdout):
                 rc = harness.main(
@@ -552,7 +558,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         self.assertEqual(report["succeeded"], 1)
         self.assertEqual(report["failed"], 1)
         self.assertFalse(report["skipped_due_to_preflight"])
-        self.assertEqual(report["preflight"]["browser"], "chrome")
+        self.assertEqual(report["preflight"]["browser"], "chrome-visible")
 
     def test_fetch_batch_with_harness_skips_stale_automation_queue_before_browser_touch(self) -> None:
         with mock.patch.object(harness, "_run_fetch_diagnose") as mock_diagnose, \
@@ -581,11 +587,63 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         self.assertEqual(mock_fetch.call_count, 0)
         self.assertEqual(mock_cleanup.call_count, 0)
 
+    def test_fetch_batch_with_harness_skips_when_newscollector_session_lock_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.dict(
+                 "os.environ",
+                 {"NEWS_UPDATE_SESSION_LOCK_PATH": str(Path(tmpdir) / "news_update.lock")},
+             ), \
+             harness.news_update_session_lock(reason="existing-session", lock_timeout=0), \
+             mock.patch.object(harness, "_run_fetch_diagnose") as mock_diagnose, \
+             mock.patch.object(harness, "fetch_article_with_harness") as mock_fetch, \
+             mock.patch.object(harness, "_run_browser_cleanup") as mock_cleanup:
+            report = harness.fetch_batch_with_harness(
+                [
+                    "https://www.bloomberg.com/news/articles/a",
+                    "https://www.bloomberg.com/news/articles/b",
+                ],
+                session_lock_timeout=0,
+            )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["skipped_due_to_session_lock"])
+        self.assertEqual(report["requested"], 2)
+        self.assertEqual(report["skipped"], 2)
+        self.assertEqual(report["failed"], 0)
+        self.assertEqual(report["preflight"], None)
+        self.assertEqual(report["cleanup"], None)
+        self.assertEqual(mock_diagnose.call_count, 0)
+        self.assertEqual(mock_fetch.call_count, 0)
+        self.assertEqual(mock_cleanup.call_count, 0)
+
+    def test_fetch_article_main_treats_session_lock_as_successful_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "news_update.lock"
+            stdout = StringIO()
+            with mock.patch.dict("os.environ", {"NEWS_UPDATE_SESSION_LOCK_PATH": str(lock_path)}), \
+                 harness.news_update_session_lock(reason="existing-session", lock_timeout=0), \
+                 mock.patch("scripts.news_update_harness.subprocess.run") as mock_run, \
+                 mock.patch("sys.stdout", stdout):
+                rc = harness.main(
+                    [
+                        "fetch-article",
+                        "--url",
+                        "https://www.bloomberg.com/news/articles/example",
+                    ]
+                )
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["skipped_due_to_session_lock"])
+        self.assertIsNone(payload["error"])
+        self.assertEqual(mock_run.call_count, 0)
+
     def test_fetch_batch_with_harness_allows_fresh_automation_queue(self) -> None:
         with mock.patch.object(
             harness,
             "_run_fetch_diagnose",
-            return_value={"ready": True, "browser": "chrome"},
+            return_value={"ready": True, "browser": "chrome-visible"},
         ), mock.patch.object(
             harness,
             "fetch_article_with_harness",
@@ -593,7 +651,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         ) as mock_fetch, mock.patch.object(
             harness,
             "_run_browser_cleanup",
-            return_value={"ok": True, "browser": "chrome", "closed": True},
+            return_value={"ok": True, "browser": "chrome-visible", "closed": True},
         ):
             report = harness.fetch_batch_with_harness(
                 ["https://example.com/a"],
@@ -643,7 +701,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
              mock.patch.object(
                  harness,
                  "_run_browser_cleanup",
-                 return_value={"ok": True, "browser": "chrome", "closed": True},
+                 return_value={"ok": True, "browser": "chrome-visible", "closed": True},
              ), \
              mock.patch.object(harness, "fetch_article_with_harness") as mock_fetch:
             report = harness.fetch_batch_with_harness(
@@ -665,12 +723,12 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         self.assertTrue(
             all("Firefox 앱을 찾지 못했습니다" in item["error"] for item in report["results"])
         )
-        self.assertEqual(report["cleanup"]["browser"], "chrome")
+        self.assertEqual(report["cleanup"]["browser"], "chrome-visible")
 
-    def test_fetch_batch_with_harness_continues_on_soft_chrome_preflight_failure(self) -> None:
+    def test_fetch_batch_with_harness_continues_on_soft_chrome_visible_preflight_failure(self) -> None:
         diagnose = {
             "ready": False,
-            "browser": "chrome",
+            "browser": "chrome-visible",
             "error": "browser diagnose 실행에 실패했습니다. subprocess 실행이 20초 제한을 넘겨 중단되었습니다.",
         }
 
@@ -678,7 +736,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
              mock.patch.object(
                  harness,
                  "_run_browser_cleanup",
-                 return_value={"ok": True, "browser": "chrome", "closed": True},
+                 return_value={"ok": True, "browser": "chrome-visible", "closed": True},
              ), \
              mock.patch.object(
                  harness,
@@ -703,13 +761,49 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         self.assertTrue(report["preflight"]["degraded"])
         self.assertIn("제한을 넘겨", report["preflight"]["degraded_reason"])
         self.assertTrue(report["batch_browser_reused"])
-        self.assertEqual(report["cleanup"]["browser"], "chrome")
+        self.assertEqual(report["cleanup"]["browser"], "chrome-visible")
+
+    def test_fetch_batch_with_harness_stops_bloomberg_after_suspicious_short_text(self) -> None:
+        with mock.patch.object(
+            harness,
+            "_run_fetch_diagnose",
+            return_value={"ready": True, "browser": "chrome-visible"},
+        ), mock.patch.object(
+            harness,
+            "fetch_article_with_harness",
+            return_value={
+                "success": True,
+                "url": "https://www.bloomberg.com/news/articles/short",
+                "title": "Short Bloomberg",
+                "text": "too short",
+                "html": "",
+                "paywall": False,
+            },
+        ) as mock_fetch, mock.patch.object(
+            harness,
+            "_run_browser_cleanup",
+            return_value={"ok": True, "browser": "chrome-visible", "closed": True},
+        ):
+            report = harness.fetch_batch_with_harness(
+                [
+                    "https://www.bloomberg.com/news/articles/short",
+                    "https://www.bloomberg.com/news/articles/next",
+                ],
+                browser="chrome",
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertFalse(report["results"][0]["success"])
+        self.assertTrue(report["results"][0]["suspicious_bloomberg_short_text"])
+        self.assertEqual(report["results"][1]["skip_reason"], "site_manual_check")
+        self.assertIn("짧은 Bloomberg 본문", report["results"][1]["error"])
 
     def test_fetch_batch_with_harness_reuses_chrome_browser_until_cleanup(self) -> None:
         with mock.patch.object(
             harness,
             "_run_fetch_diagnose",
-            return_value={"ready": True, "browser": "chrome"},
+            return_value={"ready": True, "browser": "chrome-visible"},
         ), mock.patch.object(
             harness,
             "fetch_article_with_harness",
@@ -720,7 +814,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         ) as mock_fetch, mock.patch.object(
             harness,
             "_run_browser_cleanup",
-            return_value={"ok": True, "browser": "chrome", "closed": True},
+            return_value={"ok": True, "browser": "chrome-visible", "closed": True},
         ) as mock_cleanup:
             report = harness.fetch_batch_with_harness(
                 [
@@ -732,7 +826,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertTrue(report["batch_browser_reused"])
-        self.assertEqual(report["cleanup"]["browser"], "chrome")
+        self.assertEqual(report["cleanup"]["browser"], "chrome-visible")
         self.assertEqual(mock_fetch.call_count, 2)
         self.assertEqual(mock_cleanup.call_count, 1)
         for call in mock_fetch.call_args_list:
@@ -815,7 +909,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         ) as mock_fetch, mock.patch.object(
             harness,
             "_run_fetch_diagnose",
-            return_value={"ready": True, "browser": "chrome"},
+            return_value={"ready": True, "browser": "firefox-visible"},
         ), mock.patch.object(
             harness,
             "_run_browser_cleanup",
@@ -834,7 +928,7 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         for call in mock_fetch.call_args_list:
             self.assertFalse(call.kwargs["allow_chrome_fallback"])
 
-    def test_fetch_batch_main_command_defaults_to_chrome(self) -> None:
+    def test_fetch_batch_main_command_defaults_to_chrome_visible(self) -> None:
         stdout = StringIO()
         with mock.patch.object(
             harness,
@@ -843,11 +937,11 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         ) as mock_fetch, mock.patch.object(
             harness,
             "_run_fetch_diagnose",
-            return_value={"ready": True, "browser": "chrome"},
+            return_value={"ready": True, "browser": "chrome-visible"},
         ), mock.patch.object(
             harness,
             "_run_browser_cleanup",
-            return_value={"ok": True, "browser": "chrome", "closed": True},
+            return_value={"ok": True, "browser": "chrome-visible", "closed": True},
         ):
             with mock.patch("sys.stdout", stdout):
                 rc = harness.main(
@@ -859,11 +953,11 @@ class NewsUpdateHarnessTests(unittest.TestCase):
                 )
 
         self.assertEqual(rc, 0)
-        self.assertEqual(mock_fetch.call_args.kwargs["browser"], "chrome")
+        self.assertEqual(mock_fetch.call_args.kwargs["browser"], "chrome-visible")
         self.assertFalse(mock_fetch.call_args.kwargs["allow_chrome_fallback"])
         self.assertFalse(mock_fetch.call_args.kwargs["close_after"])
         report = json.loads(stdout.getvalue())
-        self.assertEqual(report["preflight"]["browser"], "chrome")
+        self.assertEqual(report["preflight"]["browser"], "chrome-visible")
         self.assertTrue(report["batch_browser_reused"])
 
     def test_fetch_batch_main_command_can_opt_in_chrome_fallback(self) -> None:
@@ -875,11 +969,11 @@ class NewsUpdateHarnessTests(unittest.TestCase):
         ) as mock_fetch, mock.patch.object(
             harness,
             "_run_fetch_diagnose",
-            return_value={"ready": True, "browser": "chrome"},
+            return_value={"ready": True, "browser": "chrome-visible"},
         ), mock.patch.object(
             harness,
             "_run_browser_cleanup",
-            return_value={"ok": True, "browser": "chrome", "closed": True},
+            return_value={"ok": True, "browser": "chrome-visible", "closed": True},
         ):
             with mock.patch("sys.stdout", stdout):
                 rc = harness.main(

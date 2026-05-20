@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -132,6 +133,23 @@ class NewsUpdateQueueTests(unittest.TestCase):
         self.assertFalse(source["boundary_found"])
         self.assertEqual(source["new_count"], 1)
         self.assertEqual(source["candidates"][0]["title"], "Bloomberg New 1")
+
+    def test_main_blocks_when_newscollector_session_lock_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "news_update.lock"
+            stdout = StringIO()
+            with mock.patch.dict("os.environ", {"NEWS_UPDATE_SESSION_LOCK_PATH": str(lock_path)}), \
+                 queue.news_update_session_lock(reason="existing-session", lock_timeout=0), \
+                 mock.patch.object(queue.sf, "_fetch_rss_rows") as mock_fetch, \
+                 mock.patch("sys.stdout", stdout):
+                rc = queue.main(["--workspace", tmpdir, "--format", "json"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["skipped"])
+        self.assertTrue(payload["skipped_due_to_session_lock"])
+        self.assertEqual(mock_fetch.call_count, 0)
 
 
 if __name__ == "__main__":

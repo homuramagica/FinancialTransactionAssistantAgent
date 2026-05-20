@@ -237,7 +237,7 @@
 
 ### 1931년 금리 인상 — 최악의 시점
 - 1931년 9월: 영국 금본위제 이탈 → 달러로 금 교환 수요 폭증
-- 연준: 금 유출 방어 위해 금리 인상 (6주 내 1.5% → 3.5%)
+- 연준: 금 유출 방어 위해 뉴욕 연준 할인율과 단기 신용 조건을 빠르게 긴축 (현대식 연방기금금리 표현은 사용 금지)
 - 결과: 이미 침체 중인 경기를 더 누름
 
 ### 밀턴 프리드먼 & 안나 슈워츠 (1963, 《미국 통화사》)
@@ -303,3 +303,51 @@
 - FRED (연방준비은행 세인트루이스): 통화량, 금리, 실업률 시계열
 - Robert Shiller 데이터셋 (Yale): 주가, PER, 배당 장기 시계열
 - BLS (노동통계국): 물가 시계열
+
+---
+
+## 11. 2026-04-26 리서치 증보 팩
+
+이번 증보의 목표는 "모두가 옳은 일을 했다"는 테제를 장마다 다른 장면으로 증명하는 것이다. 대공황은 탐욕과 무지가 아니라, 당시 기준으로 합리적이던 선택들이 서로 증폭되며 만든 재난이었다. 따라서 각 장은 하나의 합리성을 보여준 뒤, 그 합리성이 시스템 안에서 어떻게 폭탄이 되는지를 보여줘야 한다.
+
+### 우선 보정할 고증 메모
+
+- 1931년 연준 서술에서 "연방기금금리"라는 표현은 시대착오 위험이 크다. 당시에는 뉴욕 연준 할인율, 수락어음 매입률, 금 유출 방어를 위한 신용 긴축으로 풀어 쓰는 것이 안전하다.
+- 실업률, GDP, 물가 하락률은 재구성 시계열에 따라 차이가 있다. 본문에서는 "약 25%"처럼 범위형 표현을 쓰고, 표에서만 출처 기준을 명시한다.
+- 스무트-홀리 이후 세계무역 -67%는 명목 가치와 디플레이션 효과가 섞여 보일 수 있다. "무역 가치가 붕괴했고, 그 일부는 물가 하락의 영향도 포함한다"는 단서를 붙인다.
+- 어빙 피셔의 "permanently high plateau" 발언 날짜는 자료마다 1929년 10월 16일, 21일 등으로 섞인다. 본문에서는 "폭락 직전 10월"로 쓰고, 정확 날짜는 주석성 메모로 남긴다.
+- 앤드루 멜론의 "liquidate..." 발언은 후버 회고록에 기록된 표현이라는 caveat를 붙인다. "멜런이 이렇게 말했다"보다 "후버는 훗날 멜런의 철학을 이렇게 기록했다"가 안전하다.
+
+### 장별 삽입 앵커
+
+| 장 | 보강할 장면 | 활용 출처 |
+|----|-------------|-----------|
+| 서문 | 1933년 이전 예금자는 먼저 창구에 도착해야 살아남았다. FDIC 이전 세계와 이후 세계를 대비. 최초 보험한도 2,500달러도 좋은 디테일. | FDIC `1930-1939`, FDIC 90 years |
+| 프롤로그 | ticker tape가 시장을 따라가지 못한 물리적 지연. 종이 전표, 늦게 찍히는 가격, 거리의 군중, 리처드 휘트니의 US Steel 매수 주문. | Fed History `Stock Market Crash of 1929` |
+| Ch1 전후번영 | 1920년 11월 2일 KDKA가 대선 결과를 거실로 들려준 밤. 라디오가 미국인을 하나의 정보 공간으로 묶는 장면. | Penn State KDKA, NAB Radio100 |
+| Ch2 플로리다 | 철도 병목, 토지 바인더, 건축자재 반입 제한, 1926년 마이애미 허리케인. 허리케인은 원인이 아니라 이미 약해진 버블을 끝낸 방아쇠로 처리. | Library of Congress, USF Florida Land Boom |
+| Ch4 마진 | 브로커 사무실의 전화벨, 칠판 가격, "현금을 넣거나 팔라"는 통화. 레버리지는 수식이 아니라 동시에 걸려오는 전화다. | Fed History `Stock Market Crash of 1929` |
+| Ch5 인베스트먼트 트러스트 | 골드만삭스 트레이딩 코퍼레이션을 "좋은 이름이 구조를 가리는 장면"으로 사용. SEC 이전 공시 부재와 연결. | SEC 1934 Act |
+| Ch6 어빙 피셔 | 피셔를 조롱하지 말고, 위생·인덱스·수량화폐이론을 믿은 데이터형 근대인으로 살린다. 1933년 부채-디플레이션 논문으로 인물을 회수. | Fisher 1933, Fed/학술 자료 |
+| Ch8 검은 목요일 | 프롤로그는 장면, Ch8은 메커니즘으로 분리. 목요일 민간은행 신호, 주말 마진콜 축적, 월요일 신뢰 붕괴의 삼단 구조. | Fed History |
+| Ch10 은행 | Bank of United States와 Caldwell & Company를 이름 있는 실패로 넣어 "9,000개 은행"을 사건화. 예금보험 없는 세계의 합리적 뱅크런을 강조. | FDIC, Fed History banking panics |
+| Ch11 연준 | 1931년 9월 21일 영국 금본위제 이탈. 런던의 결정이 뉴욕 금고를 흔드는 장면. "연준은 경기보다 금 태환을 지켰다." | Fed History banking panics, NBER gold standard |
+| Ch12 스무트-홀리 | 로그롤링 장면. 양모, 설탕, 과일, 채소, 지역 의원들이 보호 품목을 하나씩 얹는 회의실. | Hoover Archives, Tax Foundation, FRASER |
+| Ch15 디플레이션 | 피셔의 9단계를 한국어 서사로 줄이고, "월급은 그대로인데 빚의 무게가 30% 무거워지는 세계"로 감각화. | Fisher 1933, NBER exchange rates |
+| Ch16 FDR 취임 | 취임 다음날이 아니라 3월 5일 특별회기 소집, 3월 6일 새벽 1시 은행휴업 선언 흐름. 닫힌 은행가의 도시. | FDR Library, Miller Center |
+| Ch17 금 압수 | 5월 1일까지 금화·금지금·금증서를 제출, 보상 20.67달러, 1934년 35달러. 시간차가 감정선을 만든다. | American Presidency Project EO 6102, Fed History Gold Reserve Act |
+| Ch18 뉴딜 | FDIC, SEC, Glass-Steagall을 깊게 쓰고 나머지는 압축. 닫힌 은행이 다시 열렸을 때 사람들이 돈을 빼지 않고 넣었다는 장면. | Fed History Emergency Banking Act, SEC |
+| 에필로그 | 버냉키의 2002년 프리드먼 생일 발언과 2008년 행동을 연결하되, 결말은 "우리는 대공황을 배운 것이 아니라 대공황 위에 지어진 제도 안에서 산다." | Bernanke 2002, Fed 자료 |
+
+### 핵심 출처 링크
+
+- Federal Reserve History, `Stock Market Crash of 1929`: https://www.federalreservehistory.org/essays/stock-market-crash-of-1929
+- Federal Reserve History, `Banking Panics of 1930-31`/1931-33 관련 자료: https://www.federalreservehistory.org/essays/banking-panics-1931-33
+- Federal Reserve History, `Emergency Banking Act of 1933`: https://www.federalreservehistory.org/essays/emergency-banking-act-of-1933
+- Federal Reserve History, `Gold Reserve Act`: https://www.federalreservehistory.org/essays/gold-reserve-act
+- FDIC, 1930~1939년 은행위기와 FDIC 설립: https://www.fdic.gov/history/1930-1939
+- FDIC 90년 타임라인: https://www.fdic.gov/90years
+- American Presidency Project, Executive Order 6102: https://www.presidency.ucsb.edu/documents/executive-order-6102-forbidding-the-hoarding-gold-coin-gold-bullion-and-gold-certificates
+- Hoover Archives, Smoot-Hawley Tariff: https://hoover.blogs.archives.gov/2018/03/14/the-smoot-hawley-tariff-of-1930/
+- SEC, Securities Exchange Act of 1934: https://www.sec.gov/rules-regulations/2020/11/securities-exchange-act-1934
+- FRED DJIA: https://fred.stlouisfed.org/series/DJIA

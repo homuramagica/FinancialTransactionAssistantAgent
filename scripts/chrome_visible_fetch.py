@@ -28,6 +28,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts import firefox_visible_fetch as ff_shared  # noqa: E402
 from scripts import safari_fetch as shared  # noqa: E402
+from scripts.news_update_session_lock import (  # noqa: E402
+    NewsUpdateSessionLockError,
+    news_update_session_lock,
+)
 
 
 _DEFAULT_BROWSER_LOCK_TIMEOUT = float(os.environ.get("NEWS_FETCH_LOCK_TIMEOUT", "90"))
@@ -826,7 +830,7 @@ def diagnose(
         )
     return {
         "ready": availability is None and launch_probe.get("ok", False),
-        "browser": "chrome",
+        "browser": "chrome-visible",
         "browser_label": "Chrome Visible",
         "browser_engine": "chrome-visible",
         "profile_path": str(_profile_path()),
@@ -1011,30 +1015,49 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.close_browser:
-        report = close_browser(lock_timeout=max(0.0, args.lock_timeout))
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0 if report.get("ok") else 1
+    try:
+        with news_update_session_lock(reason="chrome_visible_fetch"):
+            if args.close_browser:
+                report = close_browser(lock_timeout=max(0.0, args.lock_timeout))
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+                return 0 if report.get("ok") else 1
 
-    if args.diagnose:
-        report = diagnose(
-            lock_timeout=max(0.0, args.lock_timeout),
-            close_after=not args.no_close,
+            if args.diagnose:
+                report = diagnose(
+                    lock_timeout=max(0.0, args.lock_timeout),
+                    close_after=not args.no_close,
+                )
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+                return 0 if report.get("ready") else 1
+
+            if not args.url:
+                parser.error("URL이 필요합니다.")
+
+            result = fetch_article(
+                args.url,
+                timeout=max(0.0, args.timeout),
+                lock_timeout=max(0.0, args.lock_timeout),
+                close_after=not args.no_close,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result.get("success") else 1
+    except NewsUpdateSessionLockError as exc:
+        print(
+            json.dumps(
+                {
+                    "success": False,
+                    "ok": True,
+                    "skipped": True,
+                    "skipped_due_to_session_lock": True,
+                    "skip_reason": "session_lock",
+                    "error": None,
+                    "session_lock": exc.to_report(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0 if report.get("ready") else 1
-
-    if not args.url:
-        parser.error("URL이 필요합니다.")
-
-    result = fetch_article(
-        args.url,
-        timeout=max(0.0, args.timeout),
-        lock_timeout=max(0.0, args.lock_timeout),
-        close_after=not args.no_close,
-    )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("success") else 1
+        return 0
 
 
 if __name__ == "__main__":

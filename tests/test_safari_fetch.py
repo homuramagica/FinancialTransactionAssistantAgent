@@ -263,23 +263,26 @@ class SafariFetchTests(unittest.TestCase):
                 sf._launch_devtools_browser()
 
         command = mock_run.call_args.args[0]
-        self.assertEqual(command[:3], ["open", "-na", str(app_path)])
+        self.assertEqual(command[:3], ["open", "-n", str(app_path)])
 
-    def test_wait_for_site_access_slot_throttles_same_source_for_10_seconds(self) -> None:
+    def test_wait_for_site_access_slot_throttles_bloomberg_with_random_interval(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             throttle_path = Path(tmpdir) / "site_throttle.json"
             with mock.patch.object(sf, "_SITE_THROTTLE_STATE_PATH", str(throttle_path)), \
-                 mock.patch.object(sf, "_SITE_THROTTLE_INTERVAL_SECONDS", 10.0), \
-                 mock.patch.object(sf.time, "time", side_effect=[100.0, 100.0, 103.0, 113.0]), \
+                 mock.patch.object(sf, "_BLOOMBERG_SITE_THROTTLE_INTERVAL_SECONDS", None), \
+                 mock.patch.object(sf.random, "uniform", return_value=30.0), \
+                 mock.patch.object(sf.time, "time", side_effect=[100.0, 100.0, 103.0, 130.0]), \
                  mock.patch.object(sf.time, "sleep") as mock_sleep:
                 first = sf._wait_for_site_access_slot("https://www.bloomberg.com/news/articles/example")
                 second = sf._wait_for_site_access_slot("https://www.bloomberg.com/news/articles/another")
 
         self.assertFalse(first["throttled"])
         self.assertEqual(first["site"], "bloomberg")
+        self.assertEqual(first["interval_seconds"], 30.0)
         self.assertTrue(second["throttled"])
         self.assertEqual(second["site"], "bloomberg")
-        mock_sleep.assert_called_once_with(7.0)
+        self.assertEqual(second["interval_seconds"], 30.0)
+        mock_sleep.assert_called_once_with(27.0)
 
     def test_site_access_key_groups_wsj_and_barrons_as_dow_jones(self) -> None:
         self.assertEqual(
